@@ -1,0 +1,1248 @@
+Antencoder — 3-Latent Factorized Representation 仕様書
+1. 目的
+
+Antencoderは、Visionと言語の間に存在する情報の非対称性を考慮し、Visual Representationを以下の3種類に分解する。
+
+𝑧
+𝑉
+=
+(
+𝑧
+s
+e
+m
+,
+𝑧
+o
+b
+j
+,
+𝑧
+s
+t
+a
+t
+e
+)
+
+Language Encoderは、Languageから予測可能な情報のみを復元する。
+
+𝑧
+𝐿
+=
+(
+𝑧
+s
+e
+m
+𝐿
+,
+𝑧
+o
+b
+j
+𝐿
+)
+
+一方、Languageから原理的に決定できないinstance-specific informationは、Vision側のState Latentに保持する。
+
+本設計の主目的は、従来の
+
+𝑀
+𝑆
+𝐸
+(
+𝑧
+𝐿
+,
+𝑧
+𝑉
+)
+
+によって、Languageから予測不能なposition等の情報を条件付き平均化し、shape等の有用な情報まで失う問題を回避することである。
+
+2. 基本思想
+
+Visual Informationを以下の3階層にfactorizeする。
+
+Semantic Latent
+
+「何を、どうするか」を表現する。
+
+𝑧
+s
+e
+m
+
+想定情報：
+
+Object category
+Color
+Attribute
+Action
+Coarse affordance
+Language semantics
+
+Languageから高い精度で予測可能であることを要求する。
+
+Object Latent
+
+「対象物がどのような物体か」を表現する。
+
+𝑧
+o
+b
+j
+
+想定情報：
+
+Shape
+Size
+Geometry
+Object appearance
+Grasp affordance
+Interaction affordance
+
+Object Latentは原則としてtranslation invariantとする。
+
+例えば同一のcupについて、
+
+𝑇
+1
+(
+c
+u
+p
+)
+≠
+𝑇
+2
+(
+c
+u
+p
+)
+
+という異なるworld positionに置かれていても、
+
+𝑧
+o
+b
+j
+(
+𝑇
+1
+(
+c
+u
+p
+)
+)
+≈
+𝑧
+o
+b
+j
+(
+𝑇
+2
+(
+c
+u
+p
+)
+)
+
+となることを目標とする。
+
+State Latent
+
+「現在の環境・物体がどういう状態にあるか」を表現する。
+
+𝑧
+s
+t
+a
+t
+e
+
+想定情報：
+
+3D position
+6D pose
+Velocity
+Contact state
+Occlusion
+Scene context
+Robot-object relationship
+Instance-specific visual state
+
+State LatentはVisionからのみ取得する。
+
+Languageからの直接的な復元対象にはしない。
+
+3. Encoder Architecture
+3.1 Visual Encoder
+
+入力：
+
+𝐼
+=
+RGB / RGB-D / Point Cloud / Video
+
+Visual Encoder：
+
+𝐸
+𝑉
+(
+𝐼
+)
+→
+(
+𝑧
+s
+e
+m
+𝑉
+,
+𝑧
+o
+b
+j
+𝑉
+,
+𝑧
+s
+t
+a
+t
+e
+𝑉
+)
+
+各latentを独立したprojection headから生成する。
+
+概念図：
+
+                    Visual Input
+                         │
+                         ▼
+                  Shared Visual Encoder
+                         │
+             ┌───────────┼───────────┐
+             ▼           ▼           ▼
+          Sem Head     Obj Head    State Head
+             │           │           │
+             ▼           ▼           ▼
+         z_sem^V       z_obj^V     z_state^V
+
+4. Language Encoder
+
+入力：
+
+𝐿
+=
+instruction / command / description
+
+Language Encoder：
+
+𝐸
+𝐿
+(
+𝐿
+)
+→
+(
+𝑧
+s
+e
+m
+𝐿
+,
+𝑧
+o
+b
+j
+𝐿
+)
+
+State Latentは生成しない。
+
+             Language
+                 │
+                 ▼
+          Language Encoder
+                 │
+          ┌──────┴──────┐
+          ▼             ▼
+       Sem Head       Obj Head
+          │             │
+          ▼             ▼
+      z_sem^L        z_obj^L
+
+5. Distillation Objective
+5.1 Semantic Loss
+
+Visual Semantic LatentとLanguage Semantic Latentを一致させる。
+
+𝐿
+s
+e
+m
+=
+𝐷
+(
+𝑧
+s
+e
+m
+𝐿
+,
+𝑧
+s
+e
+m
+𝑉
+)
+
+基本実装はMSEまたはcosine distanceとする。
+
+5.2 Object Loss
+
+Visual Object LatentとLanguage Object Latentを一致させる。
+
+𝐿
+o
+b
+j
+=
+𝐷
+(
+𝑧
+o
+b
+j
+𝐿
+,
+𝑧
+o
+b
+j
+𝑉
+)
+
+ただしObject Latentはposition informationを持たないようにする。
+
+5.3 State Loss
+
+LanguageからState Latentを直接reconstructしない。
+
+𝐿
+s
+t
+a
+t
+e
+𝐿
+=
+0
+
+State情報については、Visual Encoder内で十分な表現能力を持つことのみを要求する。
+
+6. Total Loss
+
+基本形：
+
+𝐿
+t
+o
+t
+a
+l
+=
+𝜆
+s
+e
+m
+𝐿
+s
+e
+m
++
+𝜆
+o
+b
+j
+𝐿
+o
+b
+j
+
+必要に応じて以下を追加する。
+
++
+𝜆
+c
+o
+n
+𝐿
+c
+o
+n
+t
+r
+a
+s
+t
+i
+v
+e
++
+𝜆
+i
+n
+v
+𝐿
+i
+n
+v
+a
+r
+i
+a
+n
+c
+e
+
+State Latentを含めた直接的なLanguage-Visual MSEは使用しない。
+
+7. Object LatentのPosition Invariance
+
+Object Latentにpositionが混入することを防ぐため、同一objectを異なるpositionに配置したaugmentationを使用する。
+
+例：
+
+Scene A:
+red cup → position A
+
+Scene B:
+red cup → position B
+
+Scene C:
+red cup → position C
+
+
+同一Language：
+
+"pick up the red cup"
+
+
+に対して、
+
+𝑧
+o
+b
+j
+𝑉
+(
+𝐴
+)
+≈
+𝑧
+o
+b
+j
+𝑉
+(
+𝐵
+)
+≈
+𝑧
+o
+b
+j
+𝑉
+(
+𝐶
+)
+
+となることを要求する。
+
+これによりObject Latentがworld coordinateを符号化することを抑制する。
+
+8. Canonical Object Representation
+
+可能な場合、Visual Object Encoderへの入力をobject-centric representationに変換する。
+
+Point Cloudの場合：
+
+𝑝
+𝑖
+′
+=
+𝑝
+𝑖
+−
+𝑐
+𝑠
+
+ここで、
+
+𝑐
+：object centroid
+𝑠
+：object scale
+
+とする。
+
+これにより、
+
+Translation invariance
+Scale normalization
+
+を実現する。
+
+Object Latentはcanonicalized object representationから抽出する。
+
+9. Contrastive Learning
+
+同一Languageに対して複数のVisual Instanceが存在する場合、contrastive objectiveを導入する。
+
+例：
+
+Language:
+"pick up the red cup"
+
+Scene A:
+red cup at position A
+
+Scene B:
+red cup at position B
+
+Scene C:
+red cup at position C
+
+
+Language Object Latentは、全ての対応Visual Object Latentと近くなることを要求する。
+
+𝑠
+𝑖
+𝑚
+(
+𝑧
+o
+b
+j
+𝐿
+,
+𝑧
+o
+b
+j
+𝑉
+(
+𝐴
+)
+)
+
+𝑠
+𝑖
+𝑚
+(
+𝑧
+o
+b
+j
+𝐿
+,
+𝑧
+o
+b
+j
+𝑉
+(
+𝐵
+)
+)
+
+𝑠
+𝑖
+𝑚
+(
+𝑧
+o
+b
+j
+𝐿
+,
+𝑧
+o
+b
+j
+𝑉
+(
+𝐶
+)
+)
+
+を最大化する。
+
+一方、異なるobject / instructionについてはlatentを離す。
+
+10. Latent Leakageの評価
+
+各latentが意図した情報のみを保持しているかをlinear probeで評価する。
+
+Semantic Latent
+
+評価対象：
+
+Object category
+Action
+Color
+Instruction semantics
+
+期待：
+
+𝑧
+s
+e
+m
+→
+Semantic
+高精度
+
+Object Latent
+
+評価対象：
+
+Shape
+Size
+Geometry
+Affordance
+
+期待：
+
+𝑧
+o
+b
+j
+→
+Shape/Geometry
+高精度
+
+State Latent
+
+評価対象：
+
+Position
+Pose
+Contact
+Scene state
+
+期待：
+
+𝑧
+s
+t
+a
+t
+e
+→
+State
+高精度
+
+11. Cross-Latent Leakage Evaluation
+
+Factorizationの成立を確認するため、意図しない情報のprobeも実施する。
+
+例えば、
+
+𝑧
+o
+b
+j
+→
+𝑝
+𝑜
+𝑠
+𝑖
+𝑡
+𝑖
+𝑜
+𝑛
+
+𝑧
+s
+e
+m
+→
+𝑝
+𝑜
+𝑠
+𝑖
+𝑡
+𝑖
+𝑜
+𝑛
+
+は低精度であることが望ましい。
+
+一方、
+
+𝑧
+s
+t
+a
+t
+e
+→
+𝑝
+𝑜
+𝑠
+𝑖
+𝑡
+𝑖
+𝑜
+𝑛
+
+は高精度であることが望ましい。
+
+理想的な結果：
+
+Latent	Semantic	Shape	Position
+
+𝑧
+s
+e
+m
+	High	Medium	Low
+
+𝑧
+o
+b
+j
+	Medium	High	Low
+
+𝑧
+s
+t
+a
+t
+e
+	Low	Low/Medium	High
+12. VLA Integration
+
+将来的なVLAでは、3つのLatentを異なる経路で利用する。
+
+Semantic Latent
+
+LLM / reasoning moduleに入力する。
+
+𝑧
+s
+e
+m
+→
+L
+L
+M
+
+目的：
+
+Task understanding
+Action reasoning
+Instruction grounding
+Object Latent
+
+Vision Featureとのcross-attentionに使用する。
+
+𝐴
+o
+b
+j
+=
+C
+r
+o
+s
+s
+A
+t
+t
+n
+(
+𝑄
+=
+𝑧
+o
+b
+j
+,
+𝐾
+=
+𝑉
+=
+𝐹
+v
+i
+s
+i
+o
+n
+)
+
+Object Latentをqueryとして利用することで、
+
+「Languageが指定した種類・形状のobjectをVisionのどこから探すか」
+
+を学習する。
+
+State Latent
+
+Control / Action Headに入力する。
+
+𝑎
+=
+𝜋
+(
+𝑧
+s
+e
+m
+,
+𝑧
+o
+b
+j
+,
+𝑧
+s
+t
+a
+t
+e
+)
+
+特に、
+
+Position
+Pose
+Contact
+Current scene state
+
+などのcontrol-critical informationを担当する。
+
+13. 推奨VLA構成
+                       Language
+                           │
+                           ▼
+                   Language Encoder
+                           │
+                  ┌────────┴────────┐
+                  ▼                 ▼
+             z_sem^L           z_obj^L
+                  │                 │
+                  ▼                 ▼
+              LLM /               Cross
+            Reasoning           Attention
+                                    │
+                                    ▼
+                               Vision Tokens
+                                    │
+                                    ▼
+                              Grounded Object
+                                    │
+                                    │
+Visual Input ──► Visual Encoder ───┤
+                  │                 │
+             ┌────┴────┐            │
+             ▼         ▼            │
+          z_obj^V  z_state^V        │
+             │         │             │
+             └─────────┴─────────────┘
+                       │
+                       ▼
+                   Action Head
+                       │
+                       ▼
+                    Robot
+
+14. Synthetic Experiment
+
+実データに移行する前に、現在のSynthetic Environmentでfactorizationを検証する。
+
+Experiment 1 — Baseline
+
+従来方式：
+
+𝐿
+=
+𝑀
+𝑆
+𝐸
+(
+𝑧
+𝐿
+,
+𝑧
+𝑉
+)
+
+評価：
+
+Latent similarity
+Position MAE
+Shape accuracy
+Experiment 2 — Three Latents
+
+𝑧
+𝑉
+=
+(
+𝑧
+s
+e
+m
+,
+𝑧
+o
+b
+j
+,
+𝑧
+s
+t
+a
+t
+e
+)
+
+Language：
+
+𝑧
+𝐿
+=
+(
+𝑧
+s
+e
+m
+,
+𝑧
+o
+b
+j
+)
+
+として学習。
+
+Experiment 3 — Position Randomization
+
+同一Languageに対してobject positionをランダム化する。
+
+目的：
+
+𝐼
+(
+𝐿
+;
+𝑃
+𝑜
+𝑠
+𝑖
+𝑡
+𝑖
+𝑜
+𝑛
+)
+≈
+0
+
+という条件を明示的に作る。
+
+Experiment 4 — Shape Preservation
+
+positionをランダム化しても、
+
+𝐼
+(
+𝐿
+;
+𝑆
+ℎ
+𝑎
+𝑝
+𝑒
+)
+>
+0
+
+となるようにdatasetを設計する。
+
+これにより、
+
+Languageから予測できるShapeは保持し、予測できないPositionは要求しない
+
+という設計原理を検証する。
+
+Experiment 5 — Leakage Test
+
+各latentにlinear probeを適用し、factorizationを定量評価する。
+
+15. Success Criteria
+
+本方式が成功したと判断する条件：
+
+Semantic
+
+𝑧
+s
+e
+m
+
+からsemantic informationが高精度に復元できる。
+
+Object
+
+𝑧
+o
+b
+j
+
+からshape / geometry / affordanceが高精度に復元できる。
+
+State
+
+𝑧
+s
+t
+a
+t
+e
+
+からposition / pose / stateが高精度に復元できる。
+
+Leakage
+
+𝑧
+o
+b
+j
+↛
+𝑝
+𝑜
+𝑠
+𝑖
+𝑡
+𝑖
+𝑜
+𝑛
+
+𝑧
+s
+e
+m
+↛
+𝑝
+𝑜
+𝑠
+𝑖
+𝑡
+𝑖
+𝑜
+𝑛
+
+が成立する。
+
+Language Distillation
+
+Language Encoderが
+
+(
+𝑧
+s
+e
+m
+𝑉
+,
+𝑧
+o
+b
+j
+𝑉
+)
+
+を復元できる。
+
+16. 実データへの移行方針
+
+Syntheticでfactorizationを確認した後、実データに移行する。
+
+実データでは、可能な範囲で以下のannotation / pseudo-labelを取得する。
+
+Object category
+Shape
+Size
+3D position
+6D pose
+Action
+Contact state
+Affordance
+
+全てのannotationが必須ではない。
+
+特に、
+
+𝑧
+s
+t
+a
+t
+e
+
+についてはrobot state / perception systemから取得できる情報を利用する。
+
+17. 重要な設計原則
+
+Antencoderは「Visual LatentをLanguage Latentに完全一致させる」ことを目的としない。
+
+目的は、
+
+Visual Information
+=
+Language-predictable Information
++
+Instance-specific Information
+
+という分解を実現することである。
+
+したがって、
+
+𝑧
+s
+e
+m
+,
+𝑧
+o
+b
+j
+←
+Language + Vision
+
+𝑧
+s
+t
+a
+t
+e
+←
+Vision
+
+という非対称なrepresentationを採用する。
+
+この非対称性を利用することで、Languageから復元できないpositionを無理にMSEで合わせることによるrepresentation collapseを防ぎ、同時にshape・geometry・affordance等のLanguage-predictable visual informationを保持する。
+
+18. 最終コンセプト
+
+Antencoderは、
+
+「Languageから予測可能なVisual Informationを、Semantic / Objectの二階層に分解して圧縮し、Languageから予測できないState InformationをVision側に残すfactorized visual representation」
+
+として設計する。
+
+最終的には、
+
+𝑉
+→
+(
+𝑧
+s
+e
+m
+,
+𝑧
+o
+b
+j
+,
+𝑧
+s
+t
+a
+t
+e
+)
+
+𝐿
+→
+(
+𝑧
+s
+e
+m
+,
+𝑧
+o
+b
+j
+)
+
+を基本構造とする。
+
+VLAでは、
+
+𝑧
+s
+e
+m
+→
+𝑅
+𝑒
+𝑎
+𝑠
+𝑜
+𝑛
+𝑖
+𝑛
+𝑔
+
+𝑧
+o
+b
+j
+↔
+𝑉
+𝑖
+𝑠
+𝑖
+𝑜
+𝑛
+→
+𝐺
+𝑟
+𝑜
+𝑢
+𝑛
+𝑑
+𝑖
+𝑛
+𝑔
+
+𝑧
+s
+t
+a
+t
+e
+→
+𝐶
+𝑜
+𝑛
+𝑡
+𝑟
+𝑜
+𝑙
+
+という役割分担を目標とする。
