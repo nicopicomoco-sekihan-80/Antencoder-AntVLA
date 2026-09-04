@@ -1,0 +1,462 @@
+I inspected the full Experiment_1.ipynb, including the synthetic-data generation, PGLA teacher/student training, latent-dimension sweep, vision conditioning, ablations, baselines, and benchmark outputs. The notebook is a Physics-Grounded Latent Action (PGLA) Milestone 1 experiment implemented in PyTorch and run with a Tesla T4 GPU. 
+
+
+Below is a README you can paste directly into README.md.
+
+Antencoder-AntVLA
+Physics-Grounded Latent Action (PGLA)
+This repository contains the first experimental milestone of Antencoder-AntVLA, exploring a Physics-Grounded Latent Action (PGLA) representation for vision-language-action (VLA) systems.
+The central idea is to learn a compact latent representation of robot actions from physical state + action, and then teach a language encoder to reproduce that representation from natural-language commands.
+
+In simplified form:
+
+                 ┌────────────────────┐
+                 │   Vision / State   │
+                 └─────────┬──────────┘
+                           │
+                           │
+                 ┌─────────▼──────────┐
+                 │  Physical Teacher  │
+                 │      V + A         │
+                 └─────────┬──────────┘
+                           │
+                           ▼
+                      Latent z
+                           ▲
+                           │
+                 ┌─────────┴──────────┐
+                 │ Language Student   │
+                 │       Text         │
+                 └─────────▲──────────┘
+                           │
+                    "push the red cube right"
+
+The experiment investigates whether language can be mapped into a physically meaningful latent action space and whether that representation can subsequently be combined with visual information for action prediction.
+The complete experiment is implemented in Experiment_1.ipynb.
+
+Overview
+The experiment consists of several stages:
+Construct a synthetic tabletop manipulation environment.
+Generate natural-language commands.
+Convert commands into 7-dimensional physical actions.
+Train a Physical Teacher to encode vision/state + action into a latent representation.
+Train a Language Student to reproduce the teacher's latent representation from text.
+Evaluate latent alignment and action prediction.
+Sweep the latent dimensionality.
+Add a vision-conditioned action model.
+Perform a vision-shuffling ablation.
+Compare against language-only, vision-only, and conventional language+vision baselines.
+Benchmark training throughput and parameter counts.
+Experiment 1: Synthetic Physical World
+The first milestone uses a procedurally generated synthetic environment rather than a real robotics dataset.
+Each scene contains three colored cubes:
+
+Red
+Blue
+Green
+Each cube is represented by a 3D position:
+(x, y, z)
+
+Positions are randomly sampled from the workspace.
+The experiment therefore creates paired:
+
+scene + language command → physical action
+
+samples automatically. 
+
+Supported commands
+The synthetic language contains four high-level actions:
+Action	Example
+pick	pick up the red cube
+push	push the blue cube right
+pull	pull the green cube backward
+place	place the red cube
+
+For push and pull, the available directions are:
+left
+right
+forward
+backward
+
+The vocabulary contains 18 tokens including special tokens, actions, colors, the object name, directions, and simple grammatical words. 
+
+Action Representation
+Each physical action is represented using a 7-dimensional vector:
+[x, y, z, roll, pitch, yaw, gripper]
+
+where:
+x, y, z represent the target position.
+roll, pitch, yaw represent orientation.
+gripper represents the gripper state.
+For example, a pick action uses the target cube position and activates the gripper, while push and pull modify the cube position according to the requested direction.
+The synthetic action generator is implemented directly in the notebook. 
+
+
+Synthetic Vision Representation
+Rather than rendering RGB images, the experiment converts the scene state into a compact synthetic vision feature.
+The three cube positions are concatenated:
+
+red position
++ blue position
++ green position
+
+giving a 9-dimensional scene representation.
+This is projected into a:
+
+512-dimensional vision feature
+
+with small Gaussian noise added to simulate imperfect visual observations. 
+
+This allows the experiment to study language/vision/action relationships without requiring a full robotics simulator.
+
+PGLA Architecture
+1. Physical Teacher
+The Physical Teacher learns a latent representation directly from physical information:
+Vision + Action → Latent Action
+
+The teacher contains:
+Vision encoder
+Action encoder
+Feature fusion network
+Latent representation
+Action prediction head
+The default latent dimension is:
+128
+
+The teacher is trained to reconstruct the physical action, encouraging its latent representation to retain information necessary for action execution.
+2. Language Student
+The Language Student receives only the language command:
+Text → Latent Action
+
+It consists of:
+Token Embedding
+      ↓
+Bidirectional GRU
+      ↓
+Mean Pooling
+      ↓
+MLP Projection
+      ↓
+Latent z
+
+The default architecture uses:
+Embedding dimension: 96
+GRU hidden dimension: 192
+Bidirectional GRU
+Projection dimension: 256
+Latent dimension: 128
+The final latent representation uses a Tanh activation. 
+
+Knowledge Distillation
+The student is trained against the latent representation produced by the frozen Physical Teacher.
+The training objective combines two terms:
+
+L = L_latent + 0.5 × L_action
+
+where:
+L_latent encourages the language representation to match the teacher representation.
+L_action encourages the student representation to remain useful for physical action prediction.
+This creates the following training process:
+                 Physical Teacher
+                Vision + Action
+                      │
+                      ▼
+                 Teacher latent
+                      │
+                      │ latent loss
+                      ▼
+Language ───────► Student latent
+                      │
+                      ▼
+                 Action Head
+                      │
+                      ▼
+                Predicted Action
+
+The teacher is frozen while training the student. 
+
+Dataset
+The dataset is generated entirely in memory.
+Split	Samples
+Training	30,000
+Validation	5,000
+Test	5,000
+Total	40,000
+
+The notebook uses a batch size of:
+256
+
+and fixes the random seed to 42 for reproducibility. 
+
+No external dataset download is required for this experiment.
+
+Training Configuration
+Default configuration:
+Parameter	Value
+Vision dimension	512
+Action dimension	7
+Latent dimension	128
+Embedding dimension	96
+Hidden dimension	192
+Maximum sequence length	12
+Batch size	256
+Training samples	30,000
+Validation samples	5,000
+Test samples	5,000
+Teacher epochs	20
+Student epochs	20
+Teacher learning rate	3e-4
+Student learning rate	3e-4
+Optimizer	AdamW
+Weight decay	1e-4
+
+The notebook automatically uses CUDA when available. The recorded experiment was run on a Tesla T4 using PyTorch 2.11.0+cu128. 
+
+Latent-Dimension Sweep
+One of the main experiments evaluates different latent-space sizes:
+32
+64
+128
+256
+512
+
+The experiment measures:
+Teacher position MAE
+Student position MAE
+Student rotation MAE
+Gripper accuracy
+Latent MSE
+Latent cosine similarity
+Action-probe accuracy
+Results from the notebook:
+Latent Dim	Student Params	Student Position MAE	Rotation MAE	Gripper Acc.	Latent MSE	Cosine Similarity	Action Probe
+32	541,991	0.2911	0.00122	1.000	0.02819	0.9751	1.000
+64	554,311	0.2898	0.00435	1.000	0.03051	0.9715	1.000
+128	578,951	0.2899	0.00968	1.000	0.03514	0.9648	0.976
+256	628,231	0.2877	0.01169	1.000	0.04029	0.9557	1.000
+512	726,791	0.2917	0.01995	1.000	0.04383	0.9487	1.000
+
+The results suggest that increasing the latent dimensionality does not automatically improve language-to-action performance in this synthetic setting. In particular, the smaller latent spaces achieve very strong teacher-student cosine alignment while using substantially fewer parameters. 
+
+Latent Representation Analysis
+The notebook also analyzes the geometry of the learned latent space.
+Latents are collected for the test set and grouped by action type:
+
+pick
+push
+pull
+place
+
+The 5,000 test examples produce:
+[5000, 128]
+
+latent representations.
+The experiment computes action-specific latent centroids to investigate whether different physical actions occupy distinguishable regions of the representation space. 
+
+
+An additional linear probe is trained on frozen latent representations to determine how easily action type can be decoded from the latent space.
+
+This provides a simple test of whether action semantics are explicitly represented in the learned embedding.
+
+Vision-Conditioned PGLA
+After training the language student, the experiment extends the architecture to incorporate vision.
+The resulting model follows:
+
+Language → z_language ─┐
+                       ├→ Fusion → Action
+Vision   → z_vision ───┘
+
+The language encoder is reused and frozen.
+The vision branch maps the 512-dimensional visual feature into the latent space:
+
+512 → 256 → latent_dim
+
+The language and vision representations are concatenated and passed through a fusion network before the final action head. 
+
+Vision Ablation
+To test whether the vision input actually contributes useful information, the notebook performs a controlled ablation.
+During evaluation, visual features are randomly shuffled across samples in a batch:
+
+correct language + incorrect vision
+
+The resulting position error is compared with normal evaluation.
+Result
+Condition	Position MAE
+Normal vision	0.2405
+Shuffled vision	0.3188
+
+The degradation from 0.2405 to 0.3188 indicates that the model is using information contained in the visual representation rather than relying exclusively on language. 
+
+Baselines
+The experiment evaluates several alternatives.
+Language-only baseline
+A conventional language encoder is trained directly for action prediction:
+Language → Latent → Action
+
+The baseline uses a bidirectional GRU with a projection layer and does not use the PGLA teacher representation.
+Recorded test results:
+
+Metric	Language Baseline
+Position MAE	0.2867
+Rotation MAE	0.00190
+Gripper Accuracy	1.000
+
+
+
+Vision-only baseline
+A separate model predicts actions using only the synthetic vision feature:
+Vision → Action
+
+Recorded test results:
+Metric	Vision-only
+Position MAE	0.2715
+Rotation MAE	0.00194
+Gripper Accuracy	0.7512
+
+
+
+Language + Vision baseline
+A controlled baseline combines a conventional language encoder and the same vision/fusion/action-head structure used by the PGLA vision-conditioned model.
+This provides a more direct comparison because the main architectural components are kept similar while replacing the PGLA language representation with a standard language representation.
+
+
+Parameter counts:
+
+Model	Parameters
+PGLA Language + Vision	876,942
+Conventional Language + Vision	1,723,527
+
+The PGLA model therefore uses substantially fewer parameters in this experiment. 
+
+Initial PGLA Student Results
+For the default 128-dimensional PGLA representation, the recorded student evaluation gives:
+Metric	Result
+Latent MSE	0.02454
+Latent cosine similarity	0.97685
+Action MAE	1.52806
+Position MAE	0.29069
+Rotation MAE	0.00383
+Gripper accuracy	1.000
+
+The high cosine similarity indicates that the language student successfully approximates the teacher's latent representation, although the action prediction error shows that latent alignment alone does not guarantee accurate continuous action reconstruction. 
+
+Training Speed
+The notebook also benchmarks training throughput.
+For a 5-epoch benchmark:
+
+Model	Time	Time / Epoch	Samples / Second
+PGLA Student	6.46 s	1.29 s	23,209
+Language Baseline	7.49 s	1.50 s	20,021
+
+The PGLA student achieved higher measured throughput in this benchmark. These measurements are hardware-dependent and should not be interpreted as universal speedups. 
+
+Installation
+The experiment requires Python and the following main packages:
+pip install torch numpy scikit-learn
+
+A CUDA-enabled PyTorch installation is recommended for reproducing the recorded experiment.
+The notebook automatically selects:
+
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+Running the Experiment
+Option 1: Google Colab
+The notebook was designed to run in Google Colab with GPU acceleration.
+Open:
+
+Experiment_1.ipynb
+
+Then select:
+
+Runtime → Change runtime type → GPU
+
+A Tesla T4 was used for the recorded experiment.
+Option 2: Local Jupyter
+Clone the repository:
+git clone https://github.com/nicopicomoco-sekihan-80/Antencoder-AntVLA.git
+cd Antencoder-AntVLA
+
+Install dependencies:
+pip install torch numpy scikit-learn jupyter
+
+Launch Jupyter:
+jupyter notebook
+
+Open:
+Experiment_1.ipynb
+
+and execute the cells from top to bottom.
+Saved Models
+At the end of the experiment, the notebook saves the learned encoders:
+pgla_encoder.pt
+language_encoder.pt
+
+The PGLA encoder is saved from the trained student, while the second file contains the conventional language baseline encoder. 
+
+Repository Structure
+The repository currently centers on the experimental notebook:
+Antencoder-AntVLA/
+│
+├── Experiment_1.ipynb
+├── pgla_encoder.pt          # generated after training
+├── language_encoder.pt      # generated after training
+└── README.md
+
+The .pt files are generated artifacts and may not exist until the notebook has been executed.
+Experimental Takeaways
+The first milestone provides several useful observations:
+1. Language can approximate a physically trained latent space
+The language student reaches a high teacher-student cosine similarity, demonstrating that a compact latent representation learned from physical action information can be approximated from language alone. 
+
+2. Latent dimensionality has a trade-off
+Increasing the latent dimension increases model size but does not consistently improve the student metrics. The 32- and 64-dimensional representations achieve particularly strong latent cosine alignment with fewer parameters. 
+
+3. Vision provides additional information
+Shuffling the visual features substantially increases position error:
+0.2405 → 0.3188
+
+suggesting that the vision-conditioned model uses scene-specific information. 
+4. The PGLA representation is compact
+The PGLA language+vision model has approximately 877K parameters, compared with approximately 1.72M for the controlled conventional language+vision baseline. 
+5. This is a synthetic proof-of-concept
+The current experiment should be interpreted as a controlled milestone rather than a demonstration on a real robot. The scenes, language commands, visual features, and physical actions are procedurally generated.
+The next step is therefore to test whether the same representation-learning principle transfers to realistic visual observations, robot trajectories, and real or simulated manipulation environments.
+
+Limitations
+This experiment has several important limitations:
+The visual input is a synthetic 512-dimensional feature rather than an RGB image.
+The language vocabulary is very small.
+Only four action types are supported.
+Actions are single-step 7D vectors rather than temporally extended trajectories.
+The physical dynamics are simplified deterministic rules.
+No real robot hardware is evaluated.
+No standard robotics benchmark is used.
+The reported results come from a single synthetic experimental setup.
+Consequently, the results demonstrate the feasibility of the proposed representation-learning setup, but they should not be interpreted as evidence of real-world robotic performance.
+Future Work
+Potential next steps include:
+Replace synthetic vision features with real RGB observations.
+Integrate a pretrained vision encoder.
+Move from single-step actions to action sequences.
+Introduce temporal trajectory prediction.
+Evaluate on simulated manipulation environments.
+Evaluate on real robot demonstrations.
+Investigate contrastive and metric-learning objectives for the latent space.
+Improve language compositionality.
+Test unseen object/color/action combinations.
+Study whether the learned latent space transfers across tasks.
+Compare against established VLA architectures.
+Investigate whether the PGLA representation can serve as a reusable interface between language models and robot controllers.
+Citation
+If you use this repository or build upon the PGLA experiments, please cite this repository:
+@software{antencoder_antvla,
+  title  = {Antencoder-AntVLA: Physics-Grounded Latent Action},
+  author = {nicopicomoco-sekihan-80},
+  year   = {2026},
+  url    = {https://github.com/nicopicomoco-sekihan-80/Antencoder-AntVLA}
+}
+
+License
+No license 
