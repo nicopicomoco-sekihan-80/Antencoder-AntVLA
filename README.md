@@ -23,6 +23,8 @@ representations directly from language.
 
 ## Architecture
 
+Here is the block diagram of the AntVLA framework architecture:
+
 ```mermaid
 graph LR
 
@@ -31,14 +33,14 @@ graph LR
     Teacher[Teacher]
 
     State[State]
-    WhatV[y_V: What]
-    HowT[z_T: How]
+    WhatV["y_V: What"]
+    HowT["z_T: How"]
 
     Language[Language]
     Student[Student]
 
-    WhatL[y_L: What]
-    HowL[z_L: How]
+    WhatL["y_L: What"]
+    HowL["z_L: How"]
 
     Decoder[Multimodal Decoder]
     Output[Generated Language]
@@ -64,3 +66,5 @@ graph LR
 
     Decoder --> Output
     Language -.->|Reconstruction Loss| Output
+```
+
