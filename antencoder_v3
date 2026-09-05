@@ -1,0 +1,464 @@
+AntVLA v3 仕様書
+1. 目的
+AntVLA v3では、Vision-Language-Action（VLA）における言語概念と視覚概念の対応学習を効率化するための潜在表現分解を行う。
+従来設計では、WHAT / WHERE / ACTION などの構造化された教師データを事前に用意する必要があり、一般的なロボットデータセットへの適用が困難だった。
+
+v3ではこの問題を解消するため、特殊なアノテーションを要求せず、一般的な
+
+Vision + Action + Language
+
+を利用する。
+基本思想は、
+
+Teacher : Vision + Action → Language
+Student : Language → (z, y)
+
+である。
+Teacherが実データから獲得した潜在表現を教師信号としてStudentへ蒸留する。
+
+2. 基本コンセプト
+v3ではLanguageを単一の潜在表現として扱わず、少なくとも以下の2つに分解する。
+z : Action / How representation
+y : Object / What representation
+
+例えば、
+"pick up the banana"
+
+に対して、
+z ≈ pick up
+   → approach
+   → grasp
+   → close gripper
+   → lift
+
+y ≈ banana
+   → yellow
+   → elongated
+   → curved
+   → ...
+
+という表現を期待する。
+重要なのは、y を単なる「bananaというクラスID」としないことである。
+
+y はVision側から得られる物体の視覚的・意味的属性と共有可能な表現空間を形成する。
+
+3. Teacher / Student構造
+3.1 Teacher
+Teacherは実データのVisionとActionから潜在表現を抽出し、それを用いてLanguageを再構成する。
+                  Teacher
+
+Vision
+  │
+  ├── State Encoder ─────────────┐
+  │                              │
+  └── Object Encoder ─→ y_V ─────┤
+                                  │
+Action                            ↓
+  │                         Decoder
+  └── Action Encoder → z ───────→ │
+                                  ↓
+                              Language
+
+Teacherへの入力は通常のロボットデータセットに存在する情報のみとする。
+Vision
+Action
+Language target
+
+特殊なWHAT/WHERE教師ラベルは要求しない。
+4. State Encoder
+State EncoderはVisionから、物理的・空間的状態に関する情報を抽出する。
+例：
+
+物体位置
+ロボットとの相対位置
+姿勢
+接触状態
+scene configuration
+その他Action生成に必要な状態情報
+Stateは主にTeacher側で利用する。
+StudentにはStateを直接入力しない。
+
+これは、StateがLanguageから直接復元される必要のある情報ではなく、Visionから観測可能な世界状態として扱うためである。
+
+5. Object Encoder
+Object EncoderはVisionから対象物に関する表現 y_V を生成する。
+Vision
+  ↓
+Object Encoder
+  ↓
+y_V
+
+y_V は単純な物体IDではなく、物体の属性を含む意味表現を目指す。
+例えば、
+
+banana
+↓
+yellow
+elongated
+curved
+...
+
+に対応する表現を期待する。
+6. Action Encoder
+Action Encoderは実際のRobot Actionから z を生成する。
+Action
+  ↓
+Action Encoder
+  ↓
+z
+
+z は操作の意味を表現する。
+例えば、
+
+pick up
+
+に対して、
+approach
+grasp
+close gripper
+lift
+
+などの操作的意味を含む潜在表現を期待する。
+ただし、z を明示的な離散Action sequenceとして教師付けすることは必須としない。
+
+7. Decoder
+Teacherでは、
+z
+y
+State
+
+をDecoderへ入力し、Languageを生成する。
+(z, y, State)
+       ↓
+    Decoder
+       ↓
+   Language
+
+Decoder投入前にLanguage相当の統合表現を生成しない。
+これはv3における重要な設計制約である。
+
+7.1 Language leakageの防止
+Teacher内部で、
+Vision + Action
+       ↓
+Language-like representation
+       ↓
+Decoder
+
+という構造になると、z / y の意味が失われ、Studentが単にTeacherのLanguage representationを模倣するだけになる可能性がある。
+したがって、
+
+Action → z
+Object → y
+State → state
+
+という分離をDecoder直前まで維持する。
+Decoderが初めてこれらを統合してLanguageを生成する。
+
+8. yに対するContrastive Learning
+v3では特に y の学習にContrastive Learningを導入する。
+Vision
+  ↓
+Object Encoder
+  ↓
+y_V
+       ↕ contrastive
+y_L
+  ↑
+Language Encoder
+
+対応するVision ObjectとLanguage Objectの表現を近づける。
+対応しない組み合わせは遠ざける。
+
+例えば、
+
+Vision:
+黄色く細長い物体
+
+Language:
+"banana"
+
+について、
+y_V ≈ y_L
+
+となることを目指す。
+9. Languageからyへの意味獲得
+Studentでは、
+Language
+   ↓
+Language Encoder
+   ├──→ z_L
+   └──→ y_L
+
+とする。
+例えば、
+
+"pick up the banana"
+
+から、
+z_L → pick up
+y_L → banana-related visual/semantic attributes
+
+を生成する。
+理想的には y_L が、
+
+yellow
+elongated
+curved
+...
+
+という視覚側と共有可能な特徴を含む。
+これにより、Language Encoderは単なる単語IDではなく、Visionと対応可能な意味表現を獲得する。
+
+10. Student
+Studentの入力はLanguageのみとする。
+Language
+    │
+    └── Language Encoder
+           │
+       ┌───┴───┐
+       ↓       ↓
+      z_L     y_L
+
+Teacherから得られた表現を教師信号として、
+z_L → z_T
+y_L → y_T
+
+の対応を学習する。
+Studentは特殊なWHAT/WHEREラベルを必要としない。
+
+11. Teacher-Student学習
+全体の学習フローは以下とする。
+                Teacher
+
+Vision ─→ State ───────────────┐
+   │                           │
+   └→ Object ─→ y_T ──────────┤
+                               ↓
+Action ─→ Action ─→ z_T ─→ Decoder
+                               ↓
+                         Language target
+
+
+                Student
+
+Language ───────────────→ z_S
+       │
+       └────────────────→ y_S
+
+TeacherではLanguage reconstructionを行う。
+StudentではTeacher latentへのdistillationを行う。
+
+12. Loss
+基本Lossは以下を想定する。
+12.1 Language Reconstruction Loss
+Teacherが生成するLanguageに対するLoss。
+L_language
+
+通常のtoken-level cross entropy等を使用する。
+12.2 Action latent distillation
+L_z = D(z_S, z_T)
+
+StudentのAction representationとTeacherのAction representationを近づける。
+距離関数はMSE、cosine distance、その他の適切なlatent distanceを比較する。
+
+12.3 Object contrastive loss
+L_y_contrastive
+
+Vision由来の y_V とLanguage由来の y_L を対応付ける。
+InfoNCE等のcontrastive objectiveを基本候補とする。
+
+12.4 Object latent distillation
+必要に応じて、
+L_y_distill = D(y_L, stopgrad(y_V))
+
+を追加する。
+ただし、y の意味空間をcontrastive learningによって形成することを優先し、単純なMSEのみで y を拘束しない。
+
+13. 重要な設計方針：yのLanguage依存を抑える
+y はLanguageから直接作られるが、Teacher側の視覚表現 y_V に対して強く対応させる。
+そのため、
+
+Language → y
+
+が単なるLanguage encodingにならないようにする。
+特にTeacherのObject EncoderにはLanguageを直接入力しない。
+
+禁止:
+
+Vision + Language → Object Encoder → y_V
+
+基本構成は、
+Vision → Object Encoder → y_V
+
+とする。
+Languageはcontrastive learningの対応信号として使用する。
+
+14. 期待する表現構造
+理想的なlatent spaceは以下のようになる。
+y space
+
+banana
+ ├─ yellow
+ ├─ elongated
+ └─ curved
+
+cucumber
+ ├─ green
+ ├─ elongated
+ └─ curved
+
+apple
+ ├─ red
+ └─ round
+
+完全な属性分離を保証するものではないが、共有属性を持つ物体がlatent space上で近い構造を形成することを期待する。
+15. VLAへの利用
+事前学習したStudentをVLAへ接続する。
+Language
+    │
+    ├──→ z
+    └──→ y
+             ↑
+             │
+Vision ─→ Object Encoder
+             │
+             ↓
+            y_V
+
+Vision ─→ State Encoder
+             │
+             ↓
+           State
+
+(z, y, y_V, State)
+          ↓
+       VLA Policy
+          ↓
+        Action
+
+Languageから事前に得られる z / y をVLAの初期表現として利用する。
+特に y によってLanguageとVision間のsemantic groundingを事前に形成しておくことで、ロボットデータを用いたVLA学習の効率化を狙う。
+
+16. 研究仮説
+v3では以下の仮説を検証する。
+H1：Action latentの分離
+Languageから抽出した z がAction側の意味表現を獲得できる。
+"pick up"
+"push"
+"move"
+
+などがAction latent上で適切に分離される。
+H2：Object semantic latentの獲得
+Languageから抽出した y が物体の視覚的・意味的属性を保持できる。
+例えば、
+
+banana
+→ yellow / elongated / curved
+
+のような属性をVision側の表現と共有できる。
+H3：Vision-Language groundingの高速化
+事前学習された y をVLAへ導入することで、通常のVLAと比較して、
+学習収束速度
+少量データでの性能
+unseen objectへのgeneralization
+instruction grounding
+が改善する。
+H4：特殊アノテーション不要
+既存のロボットデータセットが持つ
+Vision
+Action
+Language
+
+のみからTeacherを学習できる。
+17. 実験計画
+Experiment 1：Teacher成立性
+Vision + Action → Language
+
+が成立するか検証する。
+Experiment 2：zの意味
+異なるActionに対して z が適切に分離されるか確認する。
+例：
+
+pick
+push
+pull
+place
+
+Experiment 3：yの意味
+Object latent y に視覚属性が現れるか確認する。
+色・形状・サイズ等を操作してlatent distanceを測定する。
+
+Experiment 4：Contrastive Learningの効果
+以下を比較する。
+without contrastive
+vs
+with contrastive
+
+y のVision-Language alignmentを比較する。
+Experiment 5：Language leakage
+Object EncoderにLanguage情報を与えた場合と与えない場合を比較する。
+目的は、y がLanguageの単純なコピーになることを防ぐ設計の有効性を確認することである。
+
+Experiment 6：VLA学習効率
+通常のVLAと、
+pretrained z/y
+
+を利用したVLAを比較する。
+評価指標：
+
+学習curve
+sample efficiency
+final task success
+unseen instruction performance
+unseen object performance
+18. 成功条件
+v3の主要な成功条件は、単純なLanguage reconstruction accuracyではない。
+以下を同時に満たすことを目標とする。
+
+1. TeacherがLanguageを再構成できる
+
+2. zがAction semanticsを保持する
+
+3. yがObject/Attribute semanticsを保持する
+
+4. y_Vとy_LがVision-Language間でalignmentする
+
+5. StudentがLanguageからz/yを推定できる
+
+6. z/yを利用したVLAが通常VLAより効率的に学習する
+
+特に最終的な研究価値は6にある。
+19. v3の核心
+v3の核心は、
+        世界側                         言語側
+
+Vision ─→ Object ─→ y_V ←──────→ y_L ←─ Language
+                    ↑              ↑
+                    │ contrastive  │
+                    │              │
+Action ─→ z_T ←─────┴──────────────z_L ←─ Language
+
+という共有潜在表現の構築である。
+Teacherは、
+
+Vision + Action → Language
+
+という通常のロボットデータから学習する。
+Studentは、
+
+Language → (z, y)
+
+を学習する。
+これにより、
+
+"pick up the banana"
+        ↓
+       z
+       └─ pick / grasp / lift ...
+
+       y
+       └─ banana / yellow / elongated / ...
+
+という分解された意味表現をLanguageから生成できるようにする。
+この表現をVLAの事前知識として利用することで、Vision-Language groundingおよびAction learningに必要なデータ量を削減し、VLAの学習効率向上を目指す。
