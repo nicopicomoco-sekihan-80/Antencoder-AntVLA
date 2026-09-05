@@ -1,3 +1,20 @@
+# AntVLA
+
+## Overview
+
+AntVLA is a vision-language-action representation learning framework
+that decomposes manipulation knowledge into:
+
+- **What**: object / semantic representation
+- **How**: action / manipulation representation
+- **State**: physical and spatial state
+
+The framework uses a Teacher-Student architecture to align
+world-side representations with language-side representations.
+
+## Architecture
+
+```mermaid
 graph TD
 
     %% =========================================================
@@ -88,3 +105,5 @@ graph TD
     zL -.-> How
 
     State -.-> World
+
+‘’’
