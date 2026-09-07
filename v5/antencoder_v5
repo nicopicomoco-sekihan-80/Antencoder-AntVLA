@@ -1,0 +1,446 @@
+MobileCLIP × LIBERO-10
+State / Task Information Analysis — Result Summary
+1. Dataset / Embedding
+Dataset: lerobot/libero_10_image
+Number of frames: 101,469
+Robot state dimension: 8
+Embedding dimension: 512
+Embedding checkpoint:
+/content/v5_checkpoints/libero10_mobileclip_s0_embeddings.pt
+Embedding tensor shape:
+[101,469, 512]
+State tensor shape:
+[101,469, 8]
+Embeddings were L2-normalized for the initial embedding analyses.
+Task IDs: 10 tasks (0–9)
+
+State is observation.state.
+
+Example state:
+[-0.05338, 0.00703, 0.67832, 3.1408, 0.00176, -0.08994, 0.03879, -0.03879]
+
+2. Experimental Question
+
+Main question:
+
+How much robot-state information is encoded in the MobileCLIP embedding, and is task information merely a consequence of state information?
+
+The key test is:
+
+Decode state from embedding.
+Remove the embedding component linearly predictable from state.
+Check whether task classification remains possible.
+3. Embedding → State Linear Probe
+
+Method:
+
+Ridge regression
+Input: 512-D MobileCLIP embedding
+Target: each of the 8 state dimensions
+Train/test split: episode-level split
+GroupShuffleSplit
+Test size: 20%
+Random seed: 42
+Train: 81,424 frames
+Test: 20,045 frames
+State decoding R²
+State dim	R²
+0	0.9051
+1	0.9268
+2	0.9885
+3	0.8088
+4	0.8913
+5	0.7642
+6	0.5845
+7	0.5824
+
+Interpretation:
+
+All 8 state dimensions are linearly predictable from the embedding.
+Dimensions 0–5 are particularly strongly encoded.
+Even dimensions 6–7 have substantial linear predictability.
+Therefore, MobileCLIP embedding contains strong information about robot state.
+4. CCA: Embedding ↔ State
+
+Canonical Correlations on the episode-level test set:
+
+CCA component	Correlation
+0	0.9967
+1	0.9727
+2	0.9494
+3	0.9461
+4	0.8442
+5	0.8000
+6	0.7343
+7	0.2844
+
+Interpretation:
+
+There is a very strong linear relationship between state and embedding.
+Several canonical directions have correlations > 0.9.
+However, canonical correlation alone does NOT indicate how much embedding variance is occupied by those directions.
+Therefore CCA should not be interpreted as saying that most of the embedding is state information.
+5. First CCA Projection Removal Experiment
+
+A 7-dimensional CCA-derived subspace was projected out from the embedding.
+
+Results:
+
+Original embedding energy: 1.0000
+Residual embedding energy: 0.99528
+Energy retained: 99.53%
+
+State probe after removal:
+
+State dim	Original R²	After CCA removal
+0	0.9051	0.8995
+1	0.9268	0.9192
+2	0.9885	0.9877
+3	0.8088	0.8056
+4	0.8913	0.8859
+5	0.7642	0.7584
+6	0.5845	0.5750
+7	0.5824	0.5717
+
+Important:
+
+This CCA projection experiment is NOT considered the cleanest state-removal method.
+
+Reason:
+
+cca.x_weights_ was treated as an ordinary Euclidean projection basis.
+This does not exactly correspond to removing the full state-predictable component.
+The result is useful diagnostically but should not be the primary claim.
+6. State → Embedding Linear Regression
+
+A more direct state-removal method was subsequently used.
+
+Train:
+
+Random frame split in this particular experiment
+
+80% train / 20% test
+
+State centered using training mean
+
+Linear least-squares regression:
+
+state → 512-D embedding
+
+The learned matrix had shape:
+
+[8, 512]
+
+The state-predicted embedding component was:
+
+Z_state = (S - mean(S)) W
+
+Residual embedding:
+
+Z_residual = Z_centered - Z_state
+
+7. State → Embedding Explained Variance
+
+For a 10,000-frame state → embedding regression experiment:
+
+Per-embedding-dimension R²
+Mean R²: 0.2828
+Standard deviation: 10.34 due to many near-zero-variance dimensions / unstable per-dimension R²
+Maximum R²: 0.6024 on held-out data
+Minimum R²: approximately -126
+
+The negative R² values are mainly a consequence of evaluating individual embedding dimensions with very small total variance; they should NOT be interpreted as meaningful negative information.
+
+More useful aggregate result:
+
+Residual variance ratio
+
+After predicting embedding from state:
+
+Residual variance / original variance = 0.6857
+
+So approximately:
+
+31.4% of average embedding variance is removed/explained by the linear state model.
+68.6% remains after removing the state-predictable component.
+
+Important caveat:
+
+This is variance explained by a linear state→embedding model, not mutual information and not “31.4% of semantic information.”
+
+8. Task Centroid Similarity After State Removal
+
+After state-predictable component removal, task centroids remain strongly structured.
+
+Residual task centroid cosine similarities:
+
+       0      1      2      3      4      5      6      7      8      9
+
+0   1.000  0.559  0.481 -0.005 -0.699 -0.735  0.098 -0.713 -0.189 -0.087
+1   0.559  1.000  0.110  0.231 -0.604 -0.805  0.220 -0.867 -0.030 -0.016
+2   0.481  0.110  1.000 -0.251 -0.318 -0.320 -0.506 -0.199 -0.180  0.073
+3  -0.005  0.231 -0.251  1.000 -0.194 -0.232  0.670 -0.386  0.207 -0.744
+4  -0.699 -0.604 -0.318 -0.194  1.000  0.478 -0.149  0.523  0.034  0.128
+5  -0.735 -0.805 -0.320 -0.232  0.478  1.000 -0.124  0.849  0.016  0.061
+6   0.098  0.220 -0.506  0.670 -0.149 -0.124  1.000 -0.324 -0.172 -0.611
+7  -0.713 -0.867 -0.199 -0.386  0.523  0.849 -0.324  1.000 -0.051  0.287
+8  -0.189 -0.030 -0.180  0.207  0.034  0.016 -0.172 -0.051  1.000 -0.397
+9  -0.087 -0.016  0.073 -0.744  0.128  0.061 -0.611  0.287 -0.397  1.000
+
+
+Interpretation:
+
+Task structure is clearly still present after state removal.
+Some task pairs are strongly positively related.
+Some task pairs are strongly negatively related.
+Therefore the residual embedding is not simply random noise.
+9. Task Linear Probe — Main Result
+
+Using the state→embedding residual representation:
+
+Original embedding
+
+Task classification accuracy:
+
+99.251%
+
+State-residual embedding
+
+Task classification accuracy:
+
+99.231%
+
+Absolute drop:
+
+0.0197 percentage points
+
+Equivalent:
+
+0.000197 absolute accuracy
+
+So:
+
+Removing the embedding component linearly predictable from robot state causes essentially no degradation in task classification.
+
+This is the strongest result in the current analysis.
+
+10. Comparison
+Representation	Task accuracy
+Original embedding	99.251%
+State-residual embedding	99.231%
+Accuracy drop	0.0197 pp
+
+Interpretation:
+
+The embedding contains strong robot-state information, but task identity remains almost perfectly linearly decodable after that state-predictable component is removed.
+
+This strongly suggests that task-relevant information is represented in a subspace largely distinct from the linearly state-predictable subspace.
+
+11. Individual Embedding Dimensions
+
+Some individual embedding dimensions show moderate correlation with state.
+
+Example:
+
+State dim 6
+embedding[300]  +0.2978
+embedding[477]  +0.2697
+embedding[254]  +0.2655
+embedding[178]  +0.2644
+embedding[8]    +0.2633
+embedding[380]  +0.2607
+embedding[105]  -0.2607
+embedding[149]  +0.2607
+embedding[305]  +0.2511
+embedding[255]  +0.2502
+
+State dim 7
+embedding[300]  -0.2893
+embedding[477]  -0.2609
+embedding[305]  -0.2569
+embedding[254]  -0.2560
+embedding[178]  -0.2541
+embedding[380]  -0.2503
+embedding[8]    -0.2503
+embedding[149]  -0.2468
+embedding[105]  +0.2411
+embedding[265]  +0.2354
+
+
+Important:
+
+Individual embedding dimensions are NOT the preferred unit of analysis.
+
+The relevant object is the linear subspace represented by many embedding dimensions together.
+
+12. Key Scientific Interpretation
+
+Current evidence supports the following picture:
+
+                    MobileCLIP embedding Z
+                           |
+             +-------------+-------------+
+             |                           |
+      state-predictable             residual information
+          component                     |
+             |                           |
+      robot configuration         task / visual / semantic
+      pose / gripper etc.          information
+             |                           |
+          state probe              task probe
+             |                           |
+          high R²                 ~99% accuracy
+
+
+The central observation is:
+
+MobileCLIP encodes robot state strongly, but task identity does not appear to depend primarily on the state-encoding subspace.
+
+More formally:
+
+Z = Z_state + Z_residual
+
+where:
+
+Z_state = component linearly predictable from robot state
+Z_residual = embedding information not linearly predictable from state
+
+Then:
+
+TaskAccuracy(Z) ≈ TaskAccuracy(Z_residual)
+
+while:
+
+StateDecode(Z) is strong.
+
+This suggests a degree of separation between:
+
+robot-state information
+task-relevant visual/semantic information
+
+within the embedding.
+
+13. Important Caveats
+Caveat 1 — Random frame split vs episode split
+
+Some later experiments used random frame splitting rather than episode-level splitting.
+
+For the final/main result, an episode-level split should be preferred because adjacent frames within an episode are highly correlated.
+
+Random frame splitting can allow near-duplicate temporal states/images to appear in both train and test.
+
+Therefore the final experiment should be rerun with:
+
+GroupShuffleSplit
+group = episode_ids
+fixed random seed
+identical train/test split for all representations
+Caveat 2 — State removal is linear
+
+The residual construction removes only the component of embedding that is linearly predictable from state.
+
+It does NOT prove that all nonlinear state information has been removed.
+
+Therefore the correct claim is:
+
+“Task information survives removal of the linearly state-predictable component.”
+
+Not:
+
+“Task information is independent of state.”
+
+Caveat 3 — CCA correlations are not variance fractions
+
+High CCA correlations such as 0.9967 do not mean that 99.67% of the embedding is state information.
+
+Canonical correlation measures correlation along canonical directions, not embedding energy.
+
+Caveat 4 — Task accuracy is not mutual information
+
+99% classification accuracy demonstrates strong task decodability.
+
+It does not directly measure mutual information between task and embedding.
+
+14. Recommended Final Experiment
+
+For a clean final result, use ONE fixed episode-level split:
+
+Train = 80% episodes
+Test  = 20% episodes
+Group = episode_id
+Seed  = 42
+
+
+Then compare exactly these representations:
+
+A. Original Z
+
+B. State-predicted component Z_state
+
+C. State residual Z_residual = Z - Z_state
+
+
+Run:
+
+State probe
+Z            → state
+Z_residual   → state
+
+
+Report:
+
+R² per state dimension
+mean R²
+optionally normalized MSE
+Task probe
+Z            → task
+Z_state      → task
+Z_residual   → task
+
+
+Report:
+
+accuracy
+macro-F1
+per-task accuracy
+
+Expected qualitative result:
+
+                    State decoding       Task decoding
+
+Original Z              HIGH                  HIGH
+
+Z_state                 HIGH                  ???
+
+Z_residual              LOW                  HIGH
+
+
+The most interesting possible outcome is:
+
+Original Z        → state HIGH, task HIGH
+Z_state           → state HIGH, task low
+Z_residual        → state low,  task HIGH
+
+
+That would provide much stronger evidence for a partially disentangled representation.
+
+15. Current Bottom Line
+Strongly supported
+MobileCLIP embedding contains substantial robot-state information.
+State can be linearly decoded with R² roughly 0.58–0.99 depending on dimension.
+State→embedding regression explains a substantial fraction of embedding variance.
+After removing the linearly state-predictable component, task classification remains ~99.23%.
+Original task classification is ~99.25%.
+Therefore task accuracy drops by only ~0.02 percentage points.
+Best current interpretation
+
+The MobileCLIP representation contains strong state information, but the task information used by a linear task probe largely survives removal of the state-predictable embedding component. This suggests that task-relevant information is encoded in embedding directions that are substantially distinct from the linearly state-predictable directions.
+
+Not yet proven
+Complete independence between state and task information.
+Nonlinear state information has been removed.
+Full disentanglement.
+Causal separation between state and task representations.
+Priority next step
+
+Repeat the state→embedding residual experiment using the same episode-level train/test split used for the original state probe, then evaluate both state decoding and task decoding before/after removal.
