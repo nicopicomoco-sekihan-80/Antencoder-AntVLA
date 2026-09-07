@@ -1,0 +1,1246 @@
+
+ # Antencoder v4
+
+ ## CLIP-Guided Factorized Representation Learning for Vision-Language-Action
+
+ **Status:** Design Specification\
+ **Version:** v4.0\
+ **Pre-implementation**
+
+---
+
+ ## 1\. Overview
+
+ Antencoder v4 is a representation-learning framework for Vision-Language-Action (VLA) models.
+
+ The primary goal is to learn compact representations that separate:
+
+ - **What** — object and visual semantics
+- **How** — action semantics
+- **State** — physical and geometric state
+
+ The main change from v3 is the introduction of a pretrained vision-language model as an **Object Teacher**.
+
+ Instead of requiring the robot dataset itself to discover the entire object-semantic space, v4 uses a pretrained CLIP-like model to provide a semantic prior for object representations.
+
+ The central hypothesis is:
+
+ > A pretrained vision-language model can provide a strong semantic prior for `What`, while robot interaction data is primarily needed to learn `How` and robot-specific grounding.
+
+ The pretrained Teacher is used **only during representation learning** and is not required by the final VLA model.
+
+---
+
+ # 2\. Motivation
+
+ ## 2.1 Limitations of v3
+
+ v3 attempts to learn object semantics, action semantics, and state representations directly from Vision + Action + Language data.
+
+ This has an important advantage:
+
+ > No specialized WHAT/WHERE annotations are required.
+
+ However, learning a stable object-semantic space directly from robot data can still be difficult.
+
+ A typical robot dataset contains:
+
+```
+RGB image
+Robot action
+Language instruction
+```
+
+ but usually does not contain explicit annotations for:
+
+```
+Object identity
+Color
+Shape
+Material
+Object attributes
+Object-level semantic descriptions
+```
+
+ Consequently, the Teacher itself must discover these structures.
+
+ This can make real-world training unnecessarily difficult.
+
+---
+
+ # 3\. Core Idea
+
+ v4 separates the sources of supervision.
+
+ ### Object semantics
+
+ Use a pretrained CLIP-like model as a semantic Teacher.
+
+```
+Object crop
+    ↓
+CLIP Image Encoder
+    ↓
+Object Teacher Embedding
+```
+
+ ### Action semantics
+
+ Learn from robot interaction data.
+
+```
+Robot Action
+    ↓
+Action Encoder
+    ↓
+Action Teacher
+```
+
+ ### State
+
+ Learn from visual and geometric information.
+
+```
+Vision / Geometry
+    ↓
+State Encoder
+    ↓
+State Representation
+```
+
+ The resulting factorization is:
+
+```
+                Vision
+                   │
+        ┌──────────┼──────────┐
+        │          │          │
+        ▼          ▼          ▼
+     Object      State      Geometry
+        │          │
+      CLIP         │
+        │          │
+        ▼          ▼
+       y_T          s
+        │
+        │
+        │ Contrastive / Distillation
+        ▼
+       y_L
+        ▲
+        │
+    Language
+
+Robot Action
+      │
+      ▼
+ Action Encoder
+      │
+      ▼
+     z_T
+      │
+      │ Distillation
+      ▼
+     z_L
+      ▲
+      │
+  Language
+```
+
+ where:
+
+ - `y` = object/semantic representation
+- `z` = action/how representation
+- `s` = state representation
+
+---
+
+ # 4\. Design Principles
+
+ v4 follows five principles.
+
+ ### P1. Use existing semantic knowledge when appropriate
+
+ Object semantics do not necessarily need to be learned from scratch using robot data.
+
+ A pretrained vision-language model already contains substantial knowledge about:
+
+ - objects
+- visual appearance
+- color
+- shape
+- texture
+- material
+- semantic categories
+- visual-language associations
+
+ v4 uses this knowledge as a Teacher.
+
+ ### P2. Do not put exact geometric state into the Object Teacher
+
+ The Object Teacher should primarily describe the object itself.
+
+ Exact position, pose, and robot state should remain in a separate state representation.
+
+```
+Object:
+    "red cup"
+    shape
+    appearance
+    material
+    etc.
+
+State:
+    position
+    orientation
+    relative geometry
+    contact state
+    etc.
+```
+
+ This reduces the risk that object identity becomes entangled with its location in a particular scene.
+
+ ### P3. Do not introduce unnecessary latent factors
+
+ v4 does not initially create separate latent spaces for:
+
+```
+Color
+Shape
+Size
+Material
+Adjective
+```
+
+ Instead, these attributes are allowed to emerge inside the Object representation `y`.
+
+ The initial hypothesis is:
+
+ > A sufficiently strong Object Teacher can provide a useful semantic representation without requiring a manually designed ontology.
+
+ If later experiments show that explicit attribute factorization is beneficial, it can be introduced in a future version.
+
+ ### P4. Action semantics remain robot-specific
+
+ CLIP-like models are useful for visual-language semantics but are not expected to fully represent robot action semantics.
+
+ Therefore:
+
+```
+Object semantics → pretrained Teacher
+
+Action semantics → robot interaction data
+```
+
+ are intentionally separated.
+
+ ### P5. Teacher is not part of the final model
+
+ The Teacher is used only during representation learning.
+
+ After training:
+
+```
+Teacher
+   ↓
+discarded
+```
+
+ The final VLA model does not need to execute CLIP or another large Teacher model.
+
+---
+
+ # 5\. Object Teacher
+
+ ## 5.1 Object-centric input
+
+ The preferred Teacher input is an object crop or object region rather than the entire image.
+
+```
+Full Image
+    ↓
+Object Localization
+    ↓
+Object Region / Crop
+    ↓
+CLIP Image Encoder
+    ↓
+y_T
+```
+
+ This is important because a full-image embedding may entangle:
+
+ - object identity
+- scene layout
+- object position
+- other objects
+- background
+
+ Object-centric input provides a cleaner semantic Teacher.
+
+ Object localization may initially be provided by an existing detector, segmentation model, or dataset-specific mechanism.
+
+ The localization mechanism is not itself the research focus of v4.
+
+---
+
+ # 6\. CLIP as a Semantic Prior
+
+ The Teacher embedding is not treated as a perfect ground-truth label.
+
+ Instead:
+
+```
+CLIP embedding
+      ↓
+semantic prior
+      ↓
+Antencoder Object representation
+```
+
+ The goal is to transfer useful semantic structure into a compact representation.
+
+ For example, the embedding may naturally contain information related to:
+
+```
+Object identity
+Color
+Shape
+Appearance
+Material
+Visual attributes
+Contextual information
+```
+
+ without requiring these factors to be explicitly annotated.
+
+---
+
+ # 7\. Language Encoder
+
+ The Language Encoder receives natural-language instructions.
+
+ Example:
+
+```
+"pick up the red cup"
+```
+
+ and produces:
+
+```
+z_L
+y_L
+```
+
+ where:
+
+```
+z_L → action / how
+y_L → object / what
+```
+
+ The Language Encoder should therefore learn to separate linguistic action information from object-semantic information.
+
+---
+
+ # 8\. Action Teacher
+
+ The Action Teacher is learned from robot trajectories.
+
+ A robot action may be represented as:
+
+```
+[x, y, z,
+ roll, pitch, yaw,
+ gripper]
+```
+
+ or another action representation appropriate for the robot platform.
+
+ The Action Encoder maps robot actions or short action sequences to:
+
+```
+z_T
+```
+
+ The Language Encoder produces:
+
+```
+z_L
+```
+
+ and the two representations are aligned using distillation.
+
+```
+Robot Action
+     ↓
+ Action Encoder
+     ↓
+    z_T
+     ↑
+     │
+ Distillation
+     │
+     ↓
+    z_L
+     ↑
+     │
+ Language Encoder
+```
+
+---
+
+ # 9\. Object Representation Learning
+
+ The Object representation is trained using the pretrained Object Teacher.
+
+ For an object image region:
+
+```
+Object Crop
+    ↓
+CLIP Image Encoder
+    ↓
+y_T
+```
+
+ For the corresponding language:
+
+```
+Object Phrase
+    ↓
+CLIP Text Encoder / Language Encoder
+    ↓
+y_L
+```
+
+ The representations are aligned using contrastive learning.
+
+ A basic objective is:
+
+```
+L_object = L_contrastive(y_T, y_L)
+```
+
+ The exact contrastive formulation may use InfoNCE, symmetric CLIP-style loss, or another suitable objective.
+
+---
+
+ # 10\. Object Distillation
+
+ An additional distillation objective may be used:
+
+```
+L_y_distill = D(y_L, stopgrad(y_T))
+```
+
+ where `D` may be:
+
+ - cosine distance
+- MSE
+- normalized feature distance
+
+ However, contrastive alignment should be considered the primary mechanism.
+
+ The Teacher should provide a semantic geometry rather than simply forcing every language representation to become an identical vector.
+
+---
+
+ # 11\. Action Distillation
+
+ Action semantics use a separate objective:
+
+```
+L_z = D(z_L, stopgrad(z_T))
+```
+
+ This encourages language to recover the action semantics represented by the robot trajectory.
+
+ For example:
+
+```
+"pick up the cup"
+        ↓
+      z_L
+        ≈
+      z_T
+        ↑
+robot pick trajectory
+```
+
+ This allows `z` to learn robot-specific meanings that are not expected to be fully available in CLIP.
+
+---
+
+ # 12\. State Representation
+
+ State remains separate from object semantics.
+
+ The State Encoder may represent:
+
+```
+Object position
+Object orientation
+Robot position
+Relative position
+Relative orientation
+Contact state
+Scene geometry
+Other physical state
+```
+
+ The important constraint is:
+
+ > Exact state information should not be forced into `y`.
+
+ For example:
+
+```
+red cup at x = 0.2
+```
+
+ should not become a fundamentally different object representation from:
+
+```
+red cup at x = 0.8
+```
+
+ The object representation should remain primarily about the object, while state represents its current configuration.
+
+---
+
+ # 13\. Why CLIP May Still Contain Relational Information
+
+ The Object Teacher is not assumed to be perfectly disentangled.
+
+ A CLIP-like representation may contain weak information about:
+
+ - spatial context
+- object co-occurrence
+- scene context
+- relative relationships
+
+ This is not necessarily undesirable.
+
+ The important distinction is:
+
+```
+Object representation:
+    semantic appearance / identity
+
+State representation:
+    exact physical state
+
+Relation representation:
+    explicit relationship between objects
+```
+
+ v4 does not attempt to completely remove all contextual information from `y`.
+
+ Instead, it investigates whether the semantic representation remains useful while exact geometry is handled separately.
+
+---
+
+ # 14\. Relational Grounding
+
+ A major known difficulty is language such as:
+
+```
+"pick up the red one on the right"
+```
+
+ or:
+
+```
+"pick up the blue object to the left of the red box"
+```
+
+ These commands cannot be solved purely through object classification.
+
+ They require:
+
+```
+Object grounding
++
+Instance selection
++
+Spatial relation reasoning
+```
+
+ Therefore, v4 treats relational grounding as a separate capability.
+
+ The initial representation is:
+
+```
+z = How
+y = What
+s = State
+```
+
+ A future extension may introduce:
+
+```
+r = Relation
+```
+
+ such that:
+
+```
+r(target, reference)
+```
+
+ can represent:
+
+```
+left-of
+right-of
+above
+below
+in-front-of
+behind
+inside
+near
+far
+etc.
+```
+
+ This is intentionally not part of the minimum v4 model.
+
+---
+
+ # 15\. Why Attribute Latents Are Not Introduced Initially
+
+ A natural extension is to split:
+
+```
+y
+```
+
+ into:
+
+```
+y_object
+y_attribute
+```
+
+ or even:
+
+```
+y_identity
+y_color
+y_shape
+y_material
+```
+
+ However, this would introduce a strong manually designed ontology.
+
+ v4 therefore starts with:
+
+```
+y = unified object-semantic representation
+```
+
+ and tests whether attributes naturally emerge.
+
+ For example:
+
+```
+banana
+ ├─ yellow
+ ├─ elongated
+ └─ curved
+
+cucumber
+ ├─ green
+ ├─ elongated
+ └─ curved
+```
+
+ may form meaningful structure within `y`.
+
+ If experiments demonstrate that this is insufficient, explicit attribute representations can be investigated in a future version.
+
+---
+
+ # 16\. Overall Training Objective
+
+ A basic v4 objective is:
+
+```
+L_total =
+    λ_z L_action_distill
+  + λ_y L_object_contrastive
+  + λ_yr L_object_distill
+  + λ_rec L_language_reconstruction
+```
+
+ where:
+
+```
+L_action_distill
+    → aligns z_L with z_T
+
+L_object_contrastive
+    → aligns language/object semantics with CLIP object semantics
+
+L_object_distill
+    → optionally transfers Teacher geometry
+
+L_language_reconstruction
+    → ensures the representation remains useful for language generation
+```
+
+ State-specific objectives may be added depending on the final VLA architecture.
+
+---
+
+ # 17\. Training Pipeline
+
+ ## Stage 1: Teacher embedding extraction
+
+ Precompute object embeddings:
+
+```
+Image
+ ↓
+Object Localization
+ ↓
+Object Crop
+ ↓
+CLIP
+ ↓
+y_T
+```
+
+ The embeddings can be cached.
+
+ This means the CLIP Teacher does not necessarily need to run during every Student training iteration.
+
+---
+
+ ## Stage 2: Representation learning
+
+ Train:
+
+```
+Language Encoder
+Action Encoder
+Object Encoder
+State Encoder
+```
+
+ using the cached Teacher representations and robot data.
+
+---
+
+ ## Stage 3: Teacher removal
+
+ After representation learning:
+
+```
+CLIP Teacher
+    ↓
+discard
+```
+
+ The resulting Student representations are retained.
+
+---
+
+ ## Stage 4: VLA training
+
+ The learned representations are connected to a VLA policy.
+
+ Conceptually:
+
+```
+Language
+   ↓
+Language Encoder
+   ├── z
+   └── y
+
+Vision
+   ├── Object Encoder → y_V
+   └── State Encoder  → s
+
+          ↓
+     Grounding / Fusion
+          ↓
+       VLA Policy
+          ↓
+      Robot Action
+```
+
+---
+
+ # 18\. Data Requirements
+
+ One of the primary goals of v4 is to reduce the requirements for specialized annotations.
+
+ Minimum robot data:
+
+```
+RGB observations
+Robot actions / trajectories
+Language instructions
+```
+
+ Preferred additional information:
+
+```
+Object regions
+Object tracking
+Robot state
+Camera calibration
+```
+
+ However, specialized semantic labels such as:
+
+```
+object class
+color label
+shape label
+WHERE label
+WHAT label
+```
+
+ should not be required for the core method.
+
+---
+
+ # 19\. Computational Efficiency
+
+ The Teacher does not need to be part of the deployed model.
+
+ Furthermore, Teacher embeddings can be precomputed.
+
+ Therefore:
+
+```
+Training-time cost:
+    CLIP inference
+    ↓
+    cache embeddings
+
+Student training:
+    no CLIP inference required
+```
+
+ A lightweight CLIP-family model may be preferred when embedding extraction becomes a bottleneck.
+
+ Candidate Teachers include:
+
+ - MobileCLIP
+- MobileCLIP2
+- other compact CLIP-compatible models
+
+ The Teacher should be selected based on the trade-off between:
+
+```
+semantic quality
+embedding dimensionality
+inference cost
+memory
+```
+
+ The smallest practical Teacher should be evaluated first.
+
+---
+
+ # 20\. Main Hypotheses
+
+ ### H1 — Object Semantic Transfer
+
+ A pretrained CLIP-like model can provide a useful Teacher for the Object representation.
+
+ ### H2 — Robot-Aware Compression
+
+ A smaller Antencoder `y` can retain task-relevant semantic information from a larger pretrained Teacher.
+
+ ### H3 — Action Semantic Learning
+
+ Robot interaction data can provide stronger supervision for action semantics than a generic vision-language Teacher.
+
+ ### H4 — Reduced Data Requirement
+
+ CLIP-guided object representation learning reduces the amount of robot data required to obtain useful semantic grounding compared with learning object semantics entirely from scratch.
+
+ ### H5 — Improved VLA Sample Efficiency
+
+ Pretrained factorized representations improve VLA training efficiency and/or generalization.
+
+---
+
+ # 21\. Experiments
+
+ ## Experiment 1 — CLIP Teacher Quality
+
+ Compare:
+
+```
+No Teacher
+Small CLIP
+MobileCLIP-S0
+MobileCLIP-S2
+Larger CLIP baseline
+```
+
+ Measure:
+
+```
+Object retrieval
+Language-object matching
+Semantic similarity
+Training cost
+```
+
+---
+
+ ## Experiment 2 — Object Representation
+
+ Test whether `y` captures:
+
+```
+Object identity
+Color
+Shape
+Appearance
+Material
+```
+
+ without explicit attribute supervision.
+
+---
+
+ ## Experiment 3 — State Leakage
+
+ Use the same object at different positions.
+
+ Expected:
+
+```
+Object similarity:
+    high
+
+State difference:
+    high
+```
+
+ For example:
+
+```
+red cup @ position A
+red cup @ position B
+```
+
+ should produce similar `y` representations despite different state.
+
+---
+
+ ## Experiment 4 — Unseen Objects
+
+ Train on some object categories and evaluate on unseen categories.
+
+ Measure whether semantic similarity from the Teacher transfers to the Student.
+
+---
+
+ ## Experiment 5 — Action Representation
+
+ Evaluate whether `z` clusters according to action semantics:
+
+```
+pick
+place
+push
+pull
+move
+open
+close
+```
+
+ and whether semantically similar actions remain close.
+
+---
+
+ ## Experiment 6 — Relational Grounding
+
+ Evaluate commands such as:
+
+```
+"pick up the red object"
+
+"pick up the red object on the right"
+
+"pick up the blue object to the left of the red box"
+```
+
+ The first category tests object grounding.
+
+ The latter categories test relational grounding.
+
+ The expected outcome is that basic object grounding can be solved with `y`, while complex relational commands expose the need for a future relation representation.
+
+---
+
+ ## Experiment 7 — VLA Sample Efficiency
+
+ Compare:
+
+```
+Baseline VLA
+v3 representation
+v4 representation
+```
+
+ using different amounts of robot data:
+
+```
+1%
+5%
+10%
+25%
+50%
+100%
+```
+
+ Measure:
+
+```
+Success rate
+Convergence speed
+Generalization
+Unseen-object performance
+```
+
+ This is the primary end-to-end experiment.
+
+---
+
+ # 22\. Ablation Studies
+
+ The following ablations are important.
+
+ ### A. No CLIP Teacher
+
+ Learn `y` entirely from robot data.
+
+ ### B. CLIP Teacher without object cropping
+
+ Use the full image.
+
+ ### C. CLIP Teacher with object cropping
+
+ Use localized object regions.
+
+ ### D. Contrastive loss only
+
+```
+L_y = L_contrastive
+```
+
+ ### E. Contrastive + distillation
+
+```
+L_y =
+    L_contrastive
+  + λ L_distill
+```
+
+ ### F. Frozen Student projection
+
+ Test whether the semantic space itself must be learned or merely projected.
+
+ ### G. Different Teacher sizes
+
+ Compare compact and large CLIP-family Teachers.
+
+---
+
+ # 23\. Expected Failure Cases
+
+ v4 is not expected to completely solve:
+
+```
+Ambiguous references
+"the other one"
+
+Complex spatial relations
+"the object behind the red one"
+
+Fine-grained affordances
+"the part that can be grasped"
+
+Temporal references
+"the object I just moved"
+
+Multi-step referring expressions
+"take the red one next to the blue one and put it in the box"
+```
+
+ These should be treated as future research directions rather than forced into the initial representation.
+
+---
+
+ # 24\. v3 → v4
+
+ The conceptual transition is:
+
+```
+v3
+
+Vision + Action + Language
+          ↓
+   Self-learned Teacher
+          ↓
+   z / y / State
+
+v4
+
+              CLIP
+                ↓
+        Object semantic prior
+                ↓
+              y_T
+                ↓
+Vision ──────── y
+Language ────── y
+
+Robot Action
+     ↓
+    z_T
+     ↓
+Language ────── z
+
+Vision
+  ↓
+State
+```
+
+ The key change is:
+
+ > **v4 delegates general object semantics to a pretrained vision-language Teacher and focuses robot data on action semantics, grounding, and physical state.**
+
+---
+
+ # 25\. Research Positioning
+
+ v4 does not attempt to replace CLIP.
+
+ Instead, it asks:
+
+ > Can a compact robot-oriented representation inherit general semantic knowledge from a pretrained vision-language model and combine it with robot-specific action knowledge?
+
+ The intended division of knowledge is:
+
+```
+Foundation model
+    ↓
+General visual semantics
+
+Robot data
+    ↓
+Action semantics
+Physical interaction
+Robot state
+Task-specific grounding
+```
+
+ This provides a practical path from large-scale pretrained semantic knowledge to lightweight robot-specific representations.
+
+---
+
+ # 26\. Final Architecture
+
+ The target architecture is:
+
+```
+                       ┌──────────────────┐
+                       │  Object Crop     │
+                       └────────┬─────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │  CLIP Teacher    │
+                       └────────┬─────────┘
+                                │
+                               y_T
+                                │
+                                │
+Language ────────────────→ Language Encoder
+                                │
+                          ┌─────┴─────┐
+                          │           │
+                         y_L         z_L
+                          │           │
+                          │           │
+                   Contrastive    Distillation
+                          │           │
+                          ▼           ▼
+                         y           z
+                          │           │
+                          └─────┬─────┘
+                                │
+Vision ───────────────→ State Encoder
+                                │
+                                ▼
+                                s
+                                │
+                                ▼
+                         VLA Policy
+                                │
+                                ▼
+                           Action
+```
+
+ The CLIP Teacher is discarded after representation learning.
+
+ The deployed system contains only the compact Student/VLA components.
+
+---
+
+ # 27\. Summary
+
+ Antencoder v4 introduces a simple principle:
+
+ > **Do not make robot data rediscover knowledge that a pretrained vision-language model already provides.**
+
+ Use a pretrained CLIP-like model to provide an Object semantic prior.
+
+ Use robot data to learn:
+
+```
+How  → z
+State → s
+Grounding → object/action interaction
+```
+
+ and learn:
+
+```
+What → y
+```
+
+ through semantic distillation from the pretrained Teacher.
+
+ The initial v4 design deliberately avoids:
+
+```
+explicit adjective latents
+explicit color latents
+explicit shape latents
+explicit material latents
+explicit relation latents
+```
+
+ These can be introduced only when experiments demonstrate that the unified representation is insufficient.
+
+ The first goal is therefore not to build the most complicated factorized representation.
+
+ It is to establish a minimal, practical hypothesis:
+
+ > **A lightweight robot-oriented Student can inherit useful object semantics from a compact pretrained vision-language Teacher while learning robot-specific action semantics from real interaction data.**
+
+ If this succeeds, relational and attribute-level factorization can be added incrementally in future versions.
