@@ -1,0 +1,1573 @@
+
+ # Antencoder-AntVLA
+
+ ## Small VLA for Real-World Manipulation
+
+ AntVLA is a research project toward a small, deployable Vision-Language-Action (VLA) model for real-world manipulation.
+
+ The goal is not to build a large model that understands arbitrarily complicated instructions.
+
+ Instead:
+
+ > **Build a small model that can reliably understand and act on simple real-world tasks.**
+
+ The central idea is to represent **What** and **How** as continuous latent variables and use Language as a compact semantic interface between them.
+
+ A longer-term goal is to introduce an intermediate **Action Planner** between slow reasoning and fast control.
+
+ The Planner decomposes complex tasks into reusable manipulation primitives rather than requiring the Language Model or low-level Policy to directly solve every multi-step task.
+
+---
+
+ # Motivation
+
+ A robot trajectory contains information about **how** an action was performed.
+
+ Visual observations contain information about **what exists** and the current physical state.
+
+ Language provides semantic information about the task, but it does not uniquely specify everything.
+
+ For example:
+
+ > "pick the cube"
+
+ may correspond to:
+
+ - red cube
+- blue cube
+- green cube
+
+ The same instruction may also be executed through many valid trajectories:
+
+ - approach from the left
+- approach from the right
+- approach from above
+
+ Therefore, forcing Language to predict a single Vision or Action latent with MSE can create an artificial average representation.
+
+ AntVLA instead investigates conditional distributions over latent representations.
+
+---
+
+ # Core Idea
+
+ AntVLA separates physical information into two complementary latent spaces.
+
+ ### Vision
+
+ RGB / Observation\
+ ↓\
+ Vision Encoder\
+ ↓\
+ $z_V$\
+ ↓\
+ **What / State**
+
+ ### Action
+
+ Action trajectory\
+ ↓\
+ Action Encoder\
+ ↓\
+ $z_A$\
+ ↓\
+ **How**
+
+ Language provides a compact semantic interface from which these latent variables can be inferred.
+
+ The long-term objective is:
+
+ $$
+p(z_V \mid L)
+$$
+
+ and:
+
+ $$
+p(z_A \mid L)
+$$
+
+ where:
+
+ - $z_V$ = Vision latent
+- $z_A$ = Action latent
+- $L$ = Language
+- $p(z_V|L)$ = language-conditioned Vision latent distribution
+- $p(z_A|L)$ = language-conditioned Action latent distribution
+
+ Language is therefore not the final objective.
+
+ It is a compact semantic representation connecting:
+
+ **Vision → What**
+
+ **Language → Semantic Interface**
+
+ **Action → How**
+
+---
+
+ # Why Distributions?
+
+ A point-regression objective assumes:
+
+ $$
+L \rightarrow \hat{z}
+$$
+
+ For example:
+
+ "pick cube"\
+ ↓\
+ MSE\
+ ↓\
+ one Vision latent
+
+ However, multiple Vision states may be valid.
+
+ Likewise:
+
+ "pick the cube"\
+ ↓\
+ MSE\
+ ↓\
+ one Action latent
+
+ may average several valid approaches.
+
+ This can produce a latent that corresponds to no actual valid state or trajectory.
+
+ AntVLA instead models:
+
+ $$
+L \rightarrow p(z|L)
+$$
+
+ so multiple valid solutions can coexist.
+
+ For example:
+
+ "pick the cube"
+
+ may produce several Action latent modes:
+
+ - approach from left
+- approach from right
+- approach from above
+
+ The model is therefore not forced to collapse all valid solutions into one average representation.
+
+---
+
+ # Conditional Latent Distribution
+
+ A simple Gaussian can be used as a baseline:
+
+ $$
+p_\theta(z|L)
+=
+\mathcal{N}(z;\mu_L,\Sigma_L)
+$$
+
+ However, a single Gaussian cannot naturally represent strongly multimodal solutions.
+
+ Therefore, the main candidate is a **Mixture Density Network (MDN)**:
+
+ $$
+p_\theta(z|L)
+=
+\sum_{k=1}^{K}
+\pi_k(L)
+\mathcal{N}
+\left(
+z;\mu_k(L),\Sigma_k(L)
+\right)
+$$
+
+ The training objective is negative log-likelihood:
+
+ $$
+\mathcal{L}_{NLL}
+=
+-\log p_\theta(z|L)
+$$
+
+ This allows multiple valid latent modes to coexist.
+
+ The research question is not simply whether the model can predict a latent.
+
+ It is whether the model can represent the **set of physically valid latent solutions conditioned on language**.
+
+---
+
+ # Research Hypothesis: Language Reduces Uncertainty
+
+ A central hypothesis is that as language specifies more information, the corresponding conditional latent distribution should become more concentrated.
+
+ For example:
+
+ "pick a cube"
+
+ → high visual uncertainty
+
+ "pick the red cube"
+
+ → lower visual uncertainty
+
+ "pick the red cube on the left"
+
+ → lower uncertainty about visual state
+
+ The same principle may apply to Action.
+
+ "pick the cube"
+
+ → many valid trajectories
+
+ "pick the cube from above"
+
+ → fewer valid trajectories
+
+ Therefore:
+
+ > **Additional linguistic information should reduce uncertainty in the corresponding latent distribution.**
+
+ This provides a measurable research direction through latent variance, entropy, likelihood, or other uncertainty measures.
+
+---
+
+ # Vision and Action
+
+ The same principle is applied to both modalities.
+
+```
+                    Language
+                       │
+                Language Encoder
+                       │
+                  Language latent
+                       │
+              ┌────────┴────────┐
+              ↓                 ↓
+        p(z_V | L)         p(z_A | L)
+              ↓                 ↓
+       Vision latent       Action latent
+           What                How
+```
+
+ This provides a unified treatment of ambiguity.
+
+ ### Vision ambiguity
+
+ "pick cube"
+
+ → red cube\
+ → blue cube\
+ → green cube
+
+ ### Action ambiguity
+
+ "pick the cube"
+
+ → approach from left\
+ → approach from right\
+ → approach from above
+
+---
+
+ # Research Background: PGLA
+
+ AntVLA originated from an earlier experiment called **Physics-Grounded Latent Action (PGLA)**.
+
+ The initial idea was to learn a compact latent representation of robot actions from physical state + action, and then teach a language encoder to reproduce that representation from natural-language commands.
+
+ The initial architecture was:
+
+ Vision / State + Action\
+ ↓\
+ Physical Teacher\
+ ↓\
+ Latent $z$\
+ ↑\
+ Language Student
+
+ The experiment investigated:
+
+ - synthetic-data generation
+- PGLA Teacher / Student training
+- latent-dimension sweeps
+- vision conditioning
+- ablations
+- baselines
+- training throughput
+- parameter counts
+
+ The first milestone was implemented in PyTorch and run with a Tesla T4 GPU.
+
+---
+
+ # Experiment 1: Synthetic Physical World
+
+ The first milestone used a procedurally generated synthetic tabletop environment.
+
+ Each scene contained three colored cubes:
+
+ - Red
+- Blue
+- Green
+
+ Each cube was represented by a 3D position:
+
+ $$
+(x,y,z)
+$$
+
+ Positions were randomly sampled from the workspace.
+
+ The experiment therefore generated paired:
+
+ **scene + language command → physical action**
+
+ samples automatically.
+
+---
+
+ # Supported Commands
+
+ The synthetic language contained four high-level actions:
+
+ | Action | Example |
+| --- | --- |
+| pick | pick up the red cube |
+| push | push the blue cube right |
+| pull | pull the green cube backward |
+| place | place the red cube |
+
+ For Push and Pull, available directions were:
+
+ - left
+- right
+- forward
+- backward
+
+ The vocabulary contained 18 tokens including special tokens, actions, colors, the object name, directions, and simple grammatical words.
+
+---
+
+ # Action Representation
+
+ Each physical action was represented using a 7-dimensional vector:
+
+ $$
+[x,y,z,roll,pitch,yaw,gripper]
+$$
+
+ where:
+
+ - $x,y,z$ represent target position
+- $roll,pitch,yaw$ represent orientation
+- `gripper` represents gripper state
+
+ For example, a Pick action uses the target cube position and activates the gripper, while Push and Pull modify the cube position according to the requested direction.
+
+---
+
+ # Synthetic Vision Representation
+
+ Instead of rendering RGB images, the first milestone converted the scene state into a compact synthetic vision feature.
+
+ The three cube positions were concatenated:
+
+ red position
+
+ - blue position
+- green position
+
+ giving a 9-dimensional scene representation.
+
+ This was projected into a:
+
+ **512-dimensional vision feature**
+
+ with small Gaussian noise added to simulate imperfect visual observations.
+
+ This allowed the experiment to study language / vision / action relationships without requiring a full robotics simulator.
+
+---
+
+ # PGLA Architecture
+
+ ## Physical Teacher
+
+ The Physical Teacher learned a latent representation directly from physical information:
+
+ Vision + Action\
+ ↓\
+ Physical Teacher\
+ ↓\
+ Latent $z$\
+ ↓\
+ Action prediction
+
+ The Teacher contained:
+
+ - Vision encoder
+- Action encoder
+- Feature fusion network
+- Latent representation
+- Action prediction head
+
+ The default latent dimension was:
+
+ **128**
+
+ The Teacher was trained to reconstruct the physical action, encouraging the latent representation to retain information necessary for action execution.
+
+---
+
+ # Language Student
+
+ The Language Student received only the language command:
+
+ Text\
+ ↓\
+ Language Encoder\
+ ↓\
+ Latent Action
+
+ It consisted of:
+
+ Token Embedding\
+ ↓\
+ Bidirectional GRU\
+ ↓\
+ Mean Pooling\
+ ↓\
+ MLP Projection\
+ ↓\
+ Latent $z$
+
+ Default configuration:
+
+ - Embedding dimension: 96
+- GRU hidden dimension: 192
+- Bidirectional GRU
+- Projection dimension: 256
+- Latent dimension: 128
+- Tanh activation
+
+---
+
+ # Knowledge Distillation
+
+ The Student was trained against the latent representation produced by the frozen Physical Teacher.
+
+ The objective combined latent matching and action prediction:
+
+ $$
+L = L_{latent} + 0.5L_{action}
+$$
+
+ where:
+
+ - $L_{latent}$ encourages the language representation to match the Teacher representation
+- $L_{action}$ keeps the representation useful for physical action prediction
+
+ The Teacher was frozen while training the Student.
+
+---
+
+ # Dataset
+
+ The first milestone generated the dataset entirely in memory.
+
+ | Split | Samples |
+| --- | --- |
+| Training | 30,000 |
+| Validation | 5,000 |
+| Test | 5,000 |
+| **Total** | **40,000** |
+
+ Batch size:
+
+ **256**
+
+ Random seed:
+
+ **42**
+
+ No external dataset download was required.
+
+---
+
+ # Training Configuration
+
+ | Parameter | Value |
+| --- | --- |
+| Vision dimension | 512 |
+| Action dimension | 7 |
+| Latent dimension | 128 |
+| Embedding dimension | 96 |
+| Hidden dimension | 192 |
+| Maximum sequence length | 12 |
+| Batch size | 256 |
+| Training samples | 30,000 |
+| Validation samples | 5,000 |
+| Test samples | 5,000 |
+| Teacher epochs | 20 |
+| Student epochs | 20 |
+| Teacher learning rate | 3e-4 |
+| Student learning rate | 3e-4 |
+| Optimizer | AdamW |
+| Weight decay | 1e-4 |
+
+ The notebook automatically uses CUDA when available.
+
+ The recorded experiment used:
+
+ - PyTorch 2.11.0+cu128
+- Tesla T4
+
+---
+
+ # Latent-Dimension Sweep
+
+ The experiment evaluated latent dimensions:
+
+ - 32
+- 64
+- 128
+- 256
+- 512
+
+ Metrics included:
+
+ - Teacher position MAE
+- Student position MAE
+- Student rotation MAE
+- Gripper accuracy
+- Latent MSE
+- Latent cosine similarity
+- Action-probe accuracy
+
+ Recorded results:
+
+ | Latent Dim | Student Params | Position MAE | Rotation MAE | Gripper Acc. | Latent MSE | Cosine Similarity | Action Probe |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 541,991 | 0.2911 | 0.00122 | 1.000 | 0.02819 | 0.9751 | 1.000 |
+| 64 | 554,311 | 0.2898 | 0.00435 | 1.000 | 0.03051 | 0.9715 | 1.000 |
+| 128 | 578,951 | 0.2899 | 0.00968 | 1.000 | 0.03514 | 0.9648 | 0.976 |
+| 256 | 628,231 | 0.2877 | 0.01169 | 1.000 | 0.04029 | 0.9557 | 1.000 |
+| 512 | 726,791 | 0.2917 | 0.01995 | 1.000 | 0.04383 | 0.9487 | 1.000 |
+
+ The results suggest that increasing latent dimensionality does not automatically improve language-to-action performance in this synthetic setting.
+
+ Smaller latent spaces achieved strong Teacher-Student alignment while using substantially fewer parameters.
+
+---
+
+ # Latent Representation Analysis
+
+ Latent representations were collected for the test set and grouped by action type:
+
+ - pick
+- push
+- pull
+- place
+
+ The 5,000 test examples produced:
+
+ **\[5000, 128\]**
+
+ latent representations.
+
+ Action-specific latent centroids were computed to investigate whether different physical actions occupied distinguishable regions of the latent space.
+
+ An additional linear probe was trained on frozen latent representations to determine how easily action type could be decoded.
+
+ This provided a simple test of whether action semantics were explicitly represented in the learned embedding.
+
+---
+
+ # Vision-Conditioned PGLA
+
+ After training the Language Student, the architecture was extended to incorporate vision.
+
+ The resulting model followed:
+
+ Language → $z_{language}$\
+ Vision → $z_{vision}$\
+ ↓\
+ Fusion\
+ ↓\
+ Action
+
+ The language encoder was reused and frozen.
+
+ The vision branch mapped the 512-dimensional visual feature into the latent space:
+
+ **512 → 256 → latent\_dim**
+
+ The language and vision representations were concatenated and passed through a fusion network before the final action head.
+
+---
+
+ # Vision Ablation
+
+ To test whether the vision input contributed useful information, the experiment performed a controlled ablation.
+
+ During evaluation, visual features were randomly shuffled across samples in a batch.
+
+ This created:
+
+ **correct language + incorrect vision**
+
+ The resulting position error was compared with normal evaluation.
+
+ | Condition | Position MAE |
+| --- | --- |
+| Normal vision | 0.2405 |
+| Shuffled vision | 0.3188 |
+
+ The degradation:
+
+ **0.2405 → 0.3188**
+
+ indicates that the model was using information contained in the visual representation rather than relying exclusively on language.
+
+---
+
+ # Baselines
+
+ ## Language-only Baseline
+
+ A conventional language encoder was trained directly for action prediction:
+
+ Language\
+ ↓\
+ Latent\
+ ↓\
+ Action
+
+ Recorded test results:
+
+ | Metric | Language Baseline |
+| --- | --- |
+| Position MAE | 0.2867 |
+| Rotation MAE | 0.00190 |
+| Gripper Accuracy | 1.000 |
+
+---
+
+ ## Vision-only Baseline
+
+ A separate model predicted actions using only the synthetic vision feature:
+
+ Vision\
+ ↓\
+ Action
+
+ Recorded test results:
+
+ | Metric | Vision-only |
+| --- | --- |
+| Position MAE | 0.2715 |
+| Rotation MAE | 0.00194 |
+| Gripper Accuracy | 0.7512 |
+
+---
+
+ ## Language + Vision Baseline
+
+ A controlled baseline combined a conventional language encoder with the same vision / fusion / action-head structure used by the PGLA vision-conditioned model.
+
+ Parameter counts:
+
+ | Model | Parameters |
+| --- | --- |
+| PGLA Language + Vision | 876,942 |
+| Conventional Language + Vision | 1,723,527 |
+
+ The PGLA model therefore used substantially fewer parameters in this experiment.
+
+---
+
+ # Initial PGLA Student Results
+
+ For the default 128-dimensional PGLA representation:
+
+ | Metric | Result |
+| --- | --- |
+| Latent MSE | 0.02454 |
+| Latent cosine similarity | 0.97685 |
+| Action MAE | 1.52806 |
+| Position MAE | 0.29069 |
+| Rotation MAE | 0.00383 |
+| Gripper Accuracy | 1.000 |
+
+ The high latent cosine similarity indicates that the Language Student successfully approximated the Teacher latent.
+
+ However:
+
+ > **Latent alignment alone does not guarantee accurate continuous action reconstruction.**
+
+ This observation motivates the transition toward a more carefully structured Action latent and conditional distribution modeling.
+
+---
+
+ # Training Speed
+
+ A 5-epoch training benchmark was also performed.
+
+ | Model | Time | Time / Epoch | Samples / Second |
+| --- | --- | --- | --- |
+| PGLA Student | 6.46 s | 1.29 s | 23,209 |
+| Language Baseline | 7.49 s | 1.50 s | 20,021 |
+
+ The PGLA Student achieved higher measured throughput in this benchmark.
+
+ These measurements are hardware-dependent and should not be interpreted as universal speedups.
+
+---
+
+ # Action Encoder
+
+ The current AntVLA development begins with the Action Encoder.
+
+ The objective is to learn a latent representation of physical manipulation trajectories.
+
+ Action trajectory\
+ ↓\
+ Action Encoder\
+ ↓\
+ $z_A$\
+ ↓\
+ Action semantics
+
+ The desired property is:
+
+ **same physical action primitive → similar latent**
+
+ and:
+
+ **different action primitives → separated latent**
+
+ For example:
+
+ - Pick
+- Place
+- Push
+- Pull
+- Open
+- Close
+- Insert
+
+ should form distinguishable semantic structures while trajectories belonging to the same primitive can remain relatively close.
+
+---
+
+ # Action Teacher
+
+ The Action Teacher is the first major development target.
+
+ Its purpose is to establish a meaningful physical Action latent space **before Language is asked to reproduce it**.
+
+ The development sequence is therefore:
+
+ Action trajectory\
+ ↓\
+ Action Encoder\
+ ↓\
+ Action latent\
+ ↓\
+ Action Teacher\
+ ↓\
+ latent analysis\
+ ↓\
+ Language conditioning
+
+ This prevents the Language Encoder from defining the Action space purely from linguistic correlations.
+
+ The physical trajectory is the source of the initial Action semantics.
+
+---
+
+ # Primitive Actions vs. Multi-Step Tasks
+
+ AntVLA intentionally separates **primitive actions** from **multi-step tasks**.
+
+ Tasks such as:
+
+ - Stack
+- Fold
+- Sort
+- Assemble
+
+ may require several physical actions.
+
+ These are therefore not treated as single primitive actions by the Action Teacher.
+
+ For example:
+
+ **Stack** may require:
+
+ Pick\
+ → Move\
+ → Place
+
+ The Action Teacher should learn:
+
+ > **What does Pick mean physically?**
+
+ rather than:
+
+ > **How do I solve Stack from beginning to end?**
+
+ The latter is the responsibility of the future Action Planner.
+
+ This separation is an important part of the architecture.
+
+---
+
+ # Action Planner
+
+ A future version of AntVLA may introduce an intermediate **Action Planner**.
+
+ The Planner sits between slow reasoning and fast physical control.
+
+ For example:
+
+ LLM:
+
+ > "Stack the red cube on the blue cube."
+
+ Planner:
+
+ **Pick(red) → Move(to blue) → Place**
+
+ Fast Policy:
+
+ execute each primitive continuously.
+
+ The resulting hierarchy is:
+
+ **LLM / Slow Reasoning**
+
+ ↓
+
+ **Action Planner**
+
+ ↓
+
+ **Primitive Action**
+
+ ↓
+
+ **Fast Policy**
+
+ ↓
+
+ **IK**
+
+ ↓
+
+ **Robot**
+
+ The Planner therefore composes learned primitive actions rather than learning every multi-step task as a separate behavior.
+
+---
+
+ # Why a Planner?
+
+ A language model does not need to repeatedly generate low-level motor instructions.
+
+ Instead of:
+
+ > move here\
+>  move slightly left\
+>  raise the arm\
+>  rotate the wrist\
+>  close the gripper\
+>  ...
+
+ the system can use:
+
+ > Stack the cube.
+
+ ↓
+
+ **Action Planner**
+
+ ↓
+
+ Pick → Move → Place
+
+ ↓
+
+ **Fast Policy**
+
+ ↓
+
+ continuous robot control
+
+ This can reduce:
+
+ - unnecessary LLM calls
+- reasoning latency
+- communication overhead
+- dependence on detailed language generation
+- planning burden on the low-level Policy
+
+ The objective is not merely to reduce parameter count.
+
+ It is to assign computation to the appropriate timescale.
+
+---
+
+ # Slow, Intermediate, and Fast Intelligence
+
+ The long-term architecture separates three levels.
+
+ ## Slow Reasoning
+
+ The LLM handles high-level semantic intent.
+
+ Examples:
+
+ > "Fold the cloth."
+
+ > "Stack the cubes."
+
+ > "Move the object to the tray."
+
+ It does not need to directly generate detailed motor commands.
+
+---
+
+ ## Intermediate Planning
+
+ The Action Planner converts high-level intent into primitive manipulation steps.
+
+ For example:
+
+ **"Stack the cube."**
+
+ ↓
+
+ Pick
+
+ ↓
+
+ Move
+
+ ↓
+
+ Place
+
+ The Planner operates on a much shorter semantic / action horizon than the LLM and a much longer horizon than the low-level controller.
+
+---
+
+ ## Fast Control
+
+ The Fast Policy executes the selected primitive.
+
+ Fast Policy\
+ ↓\
+ IK\
+ ↓\
+ Robot Controller
+
+ This component is responsible for high-frequency physical execution.
+
+ The intended separation is therefore:
+
+ **Slow → decide**
+
+ **Intermediate → plan**
+
+ **Fast → execute**
+
+---
+
+ # Latent Interface Between Reasoning and Control
+
+ A longer-term possibility is to use the latent space as an interface between slow reasoning and fast control.
+
+```
+                 Slow Reasoning
+                       │
+                  task intent
+                       ↓
+                Action Planner
+                       │
+                primitive / latent
+                       ↓
+                  Fast Policy
+                       │
+                       ↓
+                       IK
+                       │
+                       ↓
+                     Robot
+```
+
+ A slow reasoning system could therefore select or modify a latent representation without directly controlling the robot at every timestep.
+
+ This creates a compact interface between:
+
+ **slow reasoning ↔ planning ↔ fast control**
+
+---
+
+ # VLA Architecture
+
+ The long-term architecture is:
+
+```
+                         RGB
+                          │
+                     Vision Encoder
+                          │
+                         z_V
+                      What / State
+                          │
+                          │
+Language                  │
+   │                      │
+   ↓                      │
+Language Encoder          │
+   │                      │
+  z_L                      │
+   │                      │
+   ├────→ p(z_V | L)       │
+   │                      │
+   └────→ p(z_A | L)       │
+              │            │
+              ↓            │
+         Action latent     │
+              │            │
+              └──────┬─────┘
+                     ↓
+                   Fusion
+                     ↓
+              Action Planner
+                     ↓
+                Fast Policy
+                     ↓
+                     IK
+                     ↓
+                   Robot
+```
+
+ The exact placement of Fusion and Planner remains an active research question.
+
+ The important architectural principle is that language, planning, and control should not all operate at the same timescale.
+
+---
+
+ # Vision Encoder
+
+ The current plan uses **MobileCLIP** as the Vision Encoder.
+
+ RGB / Observation\
+ ↓\
+ MobileCLIP\
+ ↓\
+ $z_V$\
+ ↓\
+ What / State
+
+ MobileCLIP is considered because AntVLA prioritizes:
+
+ - compact models
+- efficient inference
+- real-world deployment
+- useful semantic visual representations
+
+ The objective is not to maximize model scale.
+
+---
+
+ # Language Encoder
+
+ Once the Action latent is established, Language is introduced.
+
+ Language\
+ ↓\
+ Language Encoder\
+ ↓\
+ $z_L$
+
+ The Language Encoder should not simply predict a single Action latent.
+
+ Instead, it should represent the uncertainty that remains because Language does not fully specify the underlying visual state or action realization.
+
+ The intended mapping is:
+
+ $$
+z_L
+\rightarrow
+p(z_A|L)
+$$
+
+ and eventually:
+
+ $$
+z_L
+\rightarrow
+p(z_V|L)
+$$
+
+---
+
+ # Data Philosophy
+
+ AntVLA does not aim to solve increasingly complicated instructions.
+
+ The target is:
+
+ > **simple tasks × diverse objects × diverse environments × diverse trajectories**
+
+ Candidate primitive tasks include:
+
+ - Pick
+- Place
+- Push
+- Pull
+- Open
+- Close
+- Insert
+- Grasp
+- Move
+
+ The goal is to make a small model robust to real-world variation rather than making a large model capable of interpreting arbitrary instructions.
+
+ Complex tasks can later be represented as compositions of primitive actions.
+
+---
+
+ # Simulation First, Real Data Later
+
+ ManiSkill is currently used as a controlled research environment.
+
+ Its role is to provide a laboratory for learning and analyzing latent structure.
+
+ It provides:
+
+ - reproducible trajectories
+- clean action signals
+- explicit task information
+- controlled variation
+- large numbers of trajectories
+- repeatable experiments
+
+ The intended progression is:
+
+ ManiSkilliSkill\
+ ↓\
+ Action Teacher\
+ ↓\
+ Action latent analysis\
+ ↓\
+ Language conditioning\
+ ↓\
+ Vision conditioning\
+ ↓\
+ Action Planner\
+ ↓\
+ Fast Policy\
+ ↓\
+ Real-world data\
+ ↓\
+ Generalization\
+ ↓\
+ Deployment
+
+ ManiSkill is not assumed to be the final target domain.
+
+ The eventual goal is validation on realistic visual observations, robot trajectories, and real-world manipulation.
+
+---
+
+ # Current Development: v6-alpha
+
+ The current development stage focuses on the Action Encoder and its initial language correspondence.
+
+ ## Action → Language baseline
+
+ | Task | Correct | Total | Accuracy |
+| --- | --- | --- | --- |
+| PickCube | 100 | 100 | 100.0% |
+| StackCube | 100 | 100 | 100.0% |
+| **Overall** | **200** | **200** | **100.0%** |
+
+## Unseen trajectory evaluation
+
+ | Task | Correct | Total | Accuracy |
+| --- | --- | --- | --- |
+| PickCube | 100 | 100 | 100.0% |
+| StackCube | 100 | 100 | 100.0% |
+| **Overall** | **200** | **200** | **100.0%** |
+
+These experiments establish an initial Action Encoder baseline.
+
+ They should not be interpreted as evidence of real-world robotic performance.
+
+ Importantly, future development distinguishes between **primitive Action Encoder training** and **multi-step task planning**.
+
+---
+
+ # Current Priority
+
+ The immediate goal is not to build the complete VLA.
+
+ The development order is:
+
+ Action Encoder\
+ ↓\
+ Action Teacher\
+ ↓\
+ Action latent analysis\
+ ↓\
+ Language Encoder\
+ ↓\
+ $p(z_A|L)$\
+ ↓\
+ Gaussian baseline\
+ ↓\
+ MDN / multimodal distribution\
+ ↓\
+ MobileCLIP Vision Encoder\
+ ↓\
+ $p(z_V|L)$\
+ ↓\
+ Vision + Action fusion\
+ ↓\
+ Action Planner\
+ ↓\
+ Fast Policy\
+ ↓\
+ IK\
+ ↓\
+ Real-world evaluation
+
+ The first major milestone is therefore:
+
+ > **Build an Action latent space that represents manipulation semantics rather than merely memorizing task labels.**
+
+ The Action Planner is intentionally a later-stage component.
+
+---
+
+ # Research Questions
+
+ The project is centered around several questions.
+
+ ### 1\. Can physical action semantics be represented compactly?
+
+ Can a small latent space preserve the information necessary for manipulation?
+
+ ### 2\. Can Language recover physical action semantics?
+
+ Can language map into a physically meaningful Action latent without directly learning low-level motor commands?
+
+ ### 3\. Can ambiguity be represented explicitly?
+
+ Can:
+
+ $$
+p(z_A|L)
+$$
+
+ and:
+
+ $$
+p(z_V|L)
+$$
+
+ represent multiple valid solutions instead of averaging them?
+
+ ### 4\. Does more language reduce uncertainty?
+
+ Can additional linguistic information measurably reduce the entropy or variance of the corresponding latent distribution?
+
+ ### 5\. Can primitive skills be composed?
+
+ Can an Action Planner combine learned primitives into long-horizon tasks without requiring every task to be learned as a separate end-to-end behavior?
+
+ ### 6\. Can slow reasoning and fast control coexist efficiently?
+
+ Can a compact latent interface allow a slow reasoning system to guide a fast controller without becoming part of the high-frequency control loop?
+
+---
+
+ # Limitations
+
+ The current research has several important limitations.
+
+ - The initial PGLA experiment uses procedurally generated synthetic data.
+- The visual input in Experiment 1 is a synthetic 512-dimensional feature rather than an RGB image.
+- The initial language vocabulary is very small.
+- Only four action types are supported in the first PGLA milestone.
+- The original PGLA actions are single-step 7D vectors rather than temporally extended trajectories.
+- The synthetic physical dynamics are simplified deterministic rules.
+- The current Action Encoder baseline is not a complete long-horizon policy.
+- The Action Planner has not yet been implemented.
+- Real-world visual observations have not yet been fully evaluated.
+- No real robot hardware evaluation is included in the current experiments.
+- No standard robotics benchmark has yet been used for the PGLA milestone.
+- The reported results come from controlled experimental setups.
+- No claim is currently made that the learned representation generalizes to arbitrary manipulation tasks.
+
+ Consequently, the current results should be interpreted as research milestones and proof-of-concept experiments rather than demonstrations of general real-world robotic capability.
+
+---
+
+ # Future Work
+
+ Potential next steps include:
+
+ - learning Action latents from diverse manipulation trajectories
+- improving Action Teacher objectives
+- studying the geometry of the Action latent space
+- investigating primitive-action disentanglement
+- introducing temporal trajectory encoding
+- replacing point latent regression with conditional distributions
+- evaluating Gaussian conditional models
+- evaluating Mixture Density Networks
+- investigating other multimodal latent models
+- improving language compositionality
+- integrating MobileCLIP or another compact vision encoder
+- learning $p(z_V|L)$
+- learning $p(z_A|L)$
+- testing whether additional language reduces latent uncertainty
+- introducing Vision + Action fusion
+- developing an Action Planner
+- composing primitive actions into multi-step tasks
+- studying slow reasoning / intermediate planning / fast control
+- integrating IK and robot controllers
+- evaluating simulated manipulation environments
+- collecting real-world demonstrations
+- studying simulation-to-real transfer
+- testing unseen objects and environments
+- investigating cross-task latent transfer
+- comparing against established VLA architectures
+- studying lightweight deployment
+
+---
+
+ # Design Philosophy
+
+ AntVLA is not:
+
+ > **A large model that understands everything.**
+
+ AntVLA aims to be:
+
+ > **A small model that understands enough to work.**
+
+ The research focus is therefore not language generation.
+
+ The core question is:
+
+ > **How can a compact latent space represent What and How, preserve the ambiguity that language leaves unspecified, and provide an interface between reasoning, planning, and fast robot control?**
+
+ The intended architecture follows a simple principle:
+
+ > **Reason slowly. Plan at the task level. Control quickly.**
+
+---
+
+ # Roadmap
+
+ ## Completed / Current
+
+ - [x] Initial PGLA synthetic experiment
+- [x] Physical Teacher / Language Student architecture
+- [x] Action → Language baseline
+- [x] Unseen trajectory evaluation
+- [x] Latent dimension sweep
+- [x] Vision-conditioned PGLA
+- [x] Vision-shuffling ablation
+- [x] Language-only baseline
+- [x] Vision-only baseline
+- [x] Language + Vision baseline
+- [x] Initial throughput benchmark
+- [ ] Action Teacher refinement
+- [ ] Action latent analysis
+- [ ] Conditional Action latent model
+- [ ] Language Encoder
+
+ ## Planned
+
+ - [ ] $p(z_A|L)$
+- [ ] Gaussian conditional baseline
+- [ ] MDN / multimodal latent distribution
+- [ ] MobileCLIP Vision Encoder
+- [ ] $p(z_V|L)$
+- [ ] Vision \+ Action fusion
+- [ ] Action Planner
+- [ ] Primitive composition
+- [ ] Fast Action Policy
+- [ ] IK integration
+- [ ] Real-world manipulation experiments
+- [ ] Lightweight deployment
+
+---
+
+ # Repository Structure
+
+ The repository currently centers on the experimental notebook and generated model artifacts.
+
+```
+Antencoder-AntVLA/
+│
+├── Experiment_1.ipynb
+├── pgla_encoder.pt
+├── language_encoder.pt
+└── README.md
+```
+
+ The `.pt` files are generated artifacts and may not exist until the notebook has been executed.
+
+---
+
+ # Installation
+
+ The first PGLA experiment requires Python and the following main packages:
+
+```
+pip install torch numpy scikit-learn
+```
+
+ A CUDA-enabled PyTorch installation is recommended for reproducing the recorded experiment.
+
+ The notebook automatically selects CUDA when available.
+
+---
+
+ # Running the Experiment
+
+ ## Google Colab
+
+ The notebook was designed to run in Google Colab with GPU acceleration.
+
+ Open:
+
+ `Experiment_1.ipynb`
+
+ Then select:
+
+ **Runtime → Change runtime type → GPU**
+
+ The recorded experiment used a Tesla T4.
+
+ ## Local Jupyter
+
+ Clone the repository:
+
+```
+git clone https://github.com/nicopicomoco-sekihan-80/Antencoder-AntVLA.git
+cd Antencoder-AntVLA
+```
+
+ Install dependencies:
+
+```
+pip install torch numpy scikit-learn jupyter
+```
+
+ Launch Jupyter:
+
+```
+jupyter notebook
+```
+
+ Open:
+
+ `Experiment_1.ipynb`
+
+ and execute the cells from top to bottom.
+
+---
+
+ # Saved Models
+
+ At the end of the first experiment, the notebook saves:
+
+ - `pgla_encoder.pt`
+- `language_encoder.pt`
+
+ The PGLA encoder is saved from the trained Student, while the second file contains the conventional language baseline encoder.
+
+---
+
+ # Experimental Takeaways
+
+ The first milestone provides several useful observations.
+
+ ### 1\. Language can approximate a physically trained latent space
+
+ The Language Student reached high Teacher-Student cosine similarity, demonstrating that a compact representation learned from physical action information can be approximated from language alone in the synthetic environment.
+
+ ### 2\. Latent dimensionality has a trade-off
+
+ Increasing latent dimensionality increases model size but does not consistently improve Student metrics.
+
+ The smaller latent spaces achieved particularly strong latent cosine alignment while using fewer parameters.
+
+ ### 3\. Vision provides additional information
+
+ Shuffling visual features substantially increased position error:
+
+ **0.2405 → 0.3188**
+
+ suggesting that the vision-conditioned model uses scene-specific information.
+
+ ### 4\. PGLA can be compact
+
+ The PGLA Language \+ Vision model used approximately:
+
+ **877K parameters**
+
+ compared with approximately:
+
+ **1.72M parameters**
+
+ for the controlled conventional Language + Vision baseline.
+
+ ### 5\. Latent alignment is not sufficient
+
+ The high latent cosine similarity did not automatically produce perfect continuous action reconstruction.
+
+ This motivates the transition toward a more carefully structured Action latent and conditional distribution modeling.
+
+ ### 6\. Multi-step planning should be separated from primitive action learning
+
+ Complex tasks such as Stack are better treated as compositions of primitives.
+
+ The Action Teacher should learn the physical meaning of primitives, while a future Action Planner should determine how those primitives are composed.
+
+---
+
+ # Citation
+
+ If you use this repository or build upon the AntVLA experiments, please cite:
+
+```
+@software{antencoder_antvla,
+  title  = {Antencoder-AntVLA: Small VLA for Real-World Manipulation},
+  author = {nicopicomoco-sekihan-80},
+  year   = {2026},
+  url    = {https://github.com/nicopicomoco-sekihan-80/Antencoder-AntVLA}
+}
+```
+
+---
+
+ # License
+
+ No license.
+
+ 
