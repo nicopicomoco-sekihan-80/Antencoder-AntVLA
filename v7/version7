@@ -1,0 +1,216 @@
+Antencoder-AntVLA
+Small VLA for Real-World Manipulation
+AntVLA is a research project toward a small, deployable Vision-Language-Action (VLA) model for real-world manipulation.
+The goal is not to build a model that understands everything.
+
+Build a small model that understands enough to work.
+The core idea is to represent What and How as continuous latent variables, with Language acting as a compact semantic interface.
+Core Idea
+Vision:
+RGB → Vision Encoder → 
+z
+V
+ → What / State
+
+Action:
+
+Trajectory → Action Encoder → 
+z
+A
+ → How
+
+Language:
+
+Language → Language Encoder → 
+p
+(
+z
+V
+∣
+L
+)
+,
+p
+(
+z
+A
+∣
+L
+)
+
+Rather than forcing language to predict a single latent with MSE, AntVLA investigates conditional latent distributions.
+
+p
+(
+z
+∣
+L
+)
+
+This allows multiple valid visual states and action trajectories to coexist.
+
+For example:
+
+"pick the cube"
+may correspond to several objects and several valid approaches.
+A single point estimate may average these solutions into an invalid representation.
+
+From PGLA to AntVLA
+AntVLA originated from the Physics-Grounded Latent Action (PGLA) experiment.
+The first experiment trained a Physical Teacher from:
+
+Vision + Action → Latent
+
+and a Language Student from:
+
+Language → Latent
+
+The synthetic experiment showed that language could approximate a physically trained latent representation, while also revealing that latent alignment alone does not guarantee accurate continuous action prediction.
+
+This motivated the current focus on learning a better Action latent space and modeling its uncertainty explicitly.
+
+Action Teacher
+The first major development target is the Action Teacher.
+Action trajectory → Action Encoder → 
+z
+A
+
+The goal is for:
+
+same action primitive → similar latent
+
+different primitives → separated latent
+
+Candidate primitives include:
+
+Pick
+Place
+Push
+Pull
+Open
+Close
+Insert
+The Action Teacher focuses on primitive actions, not complete multi-step tasks.
+For example, Stack is not treated as one primitive.
+
+Instead:
+
+Stack → Pick → Move → Place
+
+The decomposition is intended to be handled by a future Action Planner.
+
+Slow → Plan → Fast
+AntVLA is designed around different timescales of intelligence.
+Slow Reasoning
+
+LLM:
+
+"Stack the red cube on the blue cube."
+↓
+Action Planner
+
+Pick → Move → Place
+↓
+Fast Policy
+
+Continuous physical control
+
+↓
+
+IK
+
+↓
+
+Robot
+
+The Planner allows the LLM to reason at a high level without repeatedly generating low-level motor instructions.
+
+This is intended to reduce latency and unnecessary LLM interaction while keeping the controller fast.
+
+Conditional Latent Distribution
+A Gaussian is considered as a baseline:
+p
+θ
+(
+z
+∣
+L
+)
+=
+N
+(
+z
+;
+μ
+L
+,
+Σ
+L
+)
+
+The main candidate is a Mixture Density Network:
+
+p
+θ
+(
+z
+∣
+L
+)
+=
+∑
+k
+π
+k
+(
+L
+)
+N
+(
+z
+;
+μ
+k
+(
+L
+)
+,
+Σ
+k
+(
+L
+)
+)
+
+trained using negative log-likelihood.
+
+A key hypothesis is:
+
+More specific language should produce a more concentrated latent distribution.
+For example:
+pick cube
+
+→ high uncertainty
+
+pick red cube
+
+→ lower uncertainty
+
+pick red cube on the left
+
+→ lower uncertainty
+
+Vision
+The current plan uses MobileCLIP as a compact Vision Encoder.
+RGB → MobileCLIP → 
+z
+V
+
+The objective is efficient real-world deployment rather than maximum model scale.
+
+Simulation First
+ManiSkill is currently used as a controlled research environment for:
+reproducible trajectories
+action supervision
+controlled variation
+latent
