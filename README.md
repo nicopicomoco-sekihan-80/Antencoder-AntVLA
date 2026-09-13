@@ -1,79 +1,23 @@
 Antencoder-AntVLA
+Small VLA for Real-World Manipulation
 
-Small, field-deployable VLA with language-conditioned latent distributions.
+AntVLA is a research project toward a small, deployable Vision-Language-Action model for real-world manipulation.
 
-AntVLA is designed around a simple principle:
+The goal is not to build a large model that understands arbitrarily complicated instructions.
 
-Do not force language to determine information that language does not specify.
+Instead:
 
-Rather than building a large model that tries to understand arbitrarily complex instructions, we aim to build a small VLA that works reliably on simple real-world manipulation tasks.
+Build a small model that can reliably understand and act on simple real-world tasks.
 
-Core Idea
+The central idea is to represent What and How as continuous latent variables and use Language as a compact semantic interface between them.
 
-AntVLA represents visual information and action information as continuous latent variables:
+1. Motivation
 
-𝑧
-𝑉
-=
-𝐸
-𝑉
-(
-𝑉
-)
+A robot trajectory contains information about how an action was performed.
 
-𝑧
-𝐴
-=
-𝐸
-𝐴
-(
-𝐴
-)
+Visual observations contain information about what exists and the current state.
 
-where:
-
-𝐸
-𝑉
-: Vision Encoder
-𝐸
-𝐴
-: Action Encoder
-𝑧
-𝑉
-: Vision latent
-𝑧
-𝐴
-: Action latent
-
-For vision, MobileCLIP is used as the main visual encoder.
-
-The key idea is that Language should not be forced to reconstruct a single point in either latent space.
-
-Instead, Language defines a conditional distribution:
-
-𝑝
-(
-𝑧
-𝑉
-∣
-𝐿
-)
-
-𝑝
-(
-𝑧
-𝐴
-∣
-𝐿
-)
-
-where 
-𝐿
- is language.
-
-Why Distribution Instead of MSE?
-
-A language instruction is inherently ambiguous.
+Language provides semantic information about the task, but it does not uniquely specify everything.
 
 For example:
 
@@ -87,21 +31,120 @@ blue cube
 green cube
 
 
-Similarly, the same instruction may be executed using different valid trajectories:
+and the same instruction may be executed through many valid trajectories:
 
-approach from the left
-approach from the right
+approach from left
+approach from right
 approach from above
 
 
-A conventional MSE objective tries to predict a single latent:
+Therefore, forcing Language to predict a single Vision or Action latent with MSE can create an artificial average representation.
+
+2. Core Idea
+
+AntVLA represents:
+
+Vision
+  ↓
+Vision Encoder
+  ↓
+z_V
+  ↓
+What / State
+
+
+and:
+
+Action trajectory
+  ↓
+Action Encoder
+  ↓
+z_A
+  ↓
+How
+
+
+The long-term goal is to learn a Language representation from which these latent variables can be recovered as conditional distributions.
+
+𝑝
+(
+𝑧
+𝑉
+∣
+𝐿
+)
+
+𝑝
+(
+𝑧
+𝐴
+∣
+𝐿
+)
+
+where:
+
+𝑧
+𝑉
+: Vision latent
+𝑧
+𝐴
+: Action latent
+𝐿
+: Language
+𝑝
+(
+𝑧
+𝑉
+∣
+𝐿
+)
+: language-conditioned Vision latent distribution
+𝑝
+(
+𝑧
+𝐴
+∣
+𝐿
+)
+: language-conditioned Action latent distribution
+
+Language is therefore not the final objective.
+
+It is a compact semantic representation of the information that connects vision and action.
+
+3. Why Distributions?
+
+A point regression objective assumes:
 
 𝐿
 →
 𝑧
 ^
 
-This can produce an average latent that does not correspond to any valid visual state or action.
+For example:
+
+"pick cube"
+        ↓
+      MSE
+        ↓
+one Vision latent
+
+
+But multiple Vision states may be valid.
+
+Likewise:
+
+"pick cube"
+        ↓
+      MSE
+        ↓
+one Action latent
+
+
+may average several valid approaches.
+
+This can produce a latent that corresponds to no actual valid state or trajectory.
 
 AntVLA instead models:
 
@@ -114,71 +157,149 @@ AntVLA instead models:
 𝐿
 )
 
-so that multiple valid solutions can coexist.
+so multiple valid solutions can coexist.
 
-Unified View
+4. Vision and Action
 
-The same principle is applied to both Vision and Action:
+The same principle is applied to both modalities.
 
-                    Language
-                        │
-                 Language Encoder
-                        │
-                  Language latent
-                        │
-              ┌─────────┴─────────┐
-              ↓                   ↓
-        p(z_V | L)           p(z_A | L)
-              ↓                   ↓
-        Vision space          Action space
-            What                 How
+                 Language
+                     │
+              Language Encoder
+                     │
+                Language latent
+                     │
+           ┌─────────┴─────────┐
+           ↓                   ↓
+      p(z_V | L)          p(z_A | L)
+           ↓                   ↓
+     Vision latent         Action latent
+        What                  How
 
 
-Thus:
+This gives a unified treatment of ambiguity.
 
-Vision latent captures what / state.
-Action latent captures how.
-Language latent provides a compact semantic representation from which both distributions can be recovered.
+Vision ambiguity
+"pick cube"
 
-Language is therefore not the final goal.
+→ red cube
+→ blue cube
+→ green cube
 
-The ultimate goal is a compact representation that supports robust robot intelligence.
+Action ambiguity
+"pick the cube"
 
-Proposed Architecture
-                RGB / Observation
-                       │
-                  MobileCLIP
-                       │
-                  Vision latent
-                       │
-                       │
-                       ├─────────────┐
-                       │             │
-                       │          Fusion
-                       │             ↑
-                       │             │
-Robot Action ──→ Action Encoder ─→ Action latent
-                                     │
-                                     ↓
-                                  VLA / Policy
-                                     │
-                                     ↓
-                                Robot Action
+→ approach from left
+→ approach from right
+→ approach from above
 
+
+The model should represent these alternatives rather than averaging them.
+
+5. Vision Encoder
+
+The current plan uses MobileCLIP as the Vision Encoder.
+
+RGB / Observation
+       ↓
+   MobileCLIP
+       ↓
+   Vision latent
+       ↓
+      z_V
+
+
+MobileCLIP is chosen because AntVLA prioritizes:
+
+compact models
+efficient inference
+real-world deployment
+useful semantic visual representations
+
+The objective is not to maximize model scale.
+
+6. Action Encoder / Action Teacher
+
+The first development target is the Action Teacher.
+
+Action trajectory
+       ↓
+ Action Encoder
+       ↓
+      z_A
+       ↓
+ Action Teacher
+       ↓
+ action semantics
+
+
+The Action Teacher establishes a meaningful Action latent space before Language is asked to recover it.
+
+The initial goal is for:
+
+same action primitive
+      ↓
+similar latent
+
+different action primitives
+      ↓
+separated latent
+
+
+For example:
+
+Pick
+Stack
+Push
+Place
+
+
+should form distinguishable semantic regions while trajectories within the same primitive remain relatively close.
+
+7. Language Encoder
+
+Once the Action latent is established, Language is introduced.
 
 Language
-   │
    ↓
 Language Encoder
-   │
    ↓
-Language latent
-   ├────────→ p(z_V | L)
+z_L
+   ├────────→ p(z_A | L)
    │
-   └────────→ p(z_A | L)
+   └────────→ p(z_V | L)
 
 
-The initial implementation can use a Gaussian or Mixture Density Network (MDN):
+The Language Encoder should not simply predict a single latent.
+
+Instead, it should represent the uncertainty that remains because Language does not fully specify the underlying visual state or action realization.
+
+8. Mixture Density Model
+
+A simple Gaussian can be used as a baseline:
+
+𝑝
+𝜃
+(
+𝑧
+∣
+𝐿
+)
+=
+𝑁
+(
+𝑧
+;
+𝜇
+𝐿
+,
+Σ
+𝐿
+)
+
+However, a single Gaussian cannot naturally represent strongly multimodal solutions.
+
+Therefore, the main candidate is a Mixture Density Network:
 
 𝑝
 𝜃
@@ -215,7 +336,7 @@ The initial implementation can use a Gaussian or Mixture Density Network (MDN):
 )
 )
 
-with negative log-likelihood:
+The training objective is negative log-likelihood:
 
 𝐿
 N
@@ -233,15 +354,223 @@ log
 𝐿
 )
 
-Research Hypothesis
+This allows the model to represent multiple valid latent modes.
 
-We hypothesize that:
+9. VLA Architecture
 
-Modeling Vision and Action latents as language-conditioned distributions is more appropriate than point regression because language does not uniquely specify visual state or action realization.
+The long-term architecture is:
 
-Furthermore:
+                         RGB
+                          │
+                     MobileCLIP
+                          │
+                       z_V
+                    What / State
+                          │
+                          │
+                          ├──────────────┐
+                          │              │
+                          │            Fusion
+                          │              ↑
+                          │              │
+Action trajectory ──→ Action Encoder ─→ z_A
+                                         How
+                                          │
+                                          ↓
+                                       Policy
+                                          │
+                                          ↓
+                                     Robot Action
 
-As language contains more information about the visual state or action, the corresponding conditional distribution should become more concentrated.
+
+Language
+   │
+   ↓
+Language Encoder
+   │
+   ↓
+  z_L
+   ├────────→ p(z_V | L)
+   │
+   └────────→ p(z_A | L)
+
+
+The Policy remains the ultimate downstream objective.
+
+Language generation itself is not the primary goal.
+
+10. Slow and Fast Intelligence
+
+A longer-term goal is to use the latent space as an interface between slow reasoning and fast control.
+
+                Slow Reasoning
+                      │
+             latent intervention
+                      │
+             ┌────────┴────────┐
+             ↓                 ↓
+       Vision latent       Action latent
+          What                 How
+             │                 │
+             └────────┬────────┘
+                      ↓
+                  Fast Policy
+                      ↓
+                    Robot
+
+
+For example, a slow reasoning module may determine:
+
+"grasp this object"
+
+
+without directly controlling the robot at every timestep.
+
+Instead, it can intervene in the relevant latent representation:
+
+Slow reasoning
+      ↓
+modify / select latent
+      ↓
+Fast policy
+      ↓
+robot action
+
+
+This enables a possible separation between:
+
+slow reasoning / planning
+fast perception / control
+
+while keeping the interface compact.
+
+11. Data Philosophy
+
+AntVLA does not aim to solve increasingly complicated instructions.
+
+The target is:
+
+simple tasks
+×
+diverse objects
+×
+diverse environments
+×
+diverse trajectories
+
+Candidate primitive tasks include:
+
+Pick
+Place
+Push
+Pull
+Open
+Close
+Insert
+Stack
+
+
+The goal is to make a small model robust to real-world variation, rather than making a large model capable of interpreting arbitrary instructions.
+
+12. Simulation First, Real Data Later
+
+ManiSkill is currently used as a controlled research environment.
+
+Its role is:
+
+controlled laboratory for learning and analyzing the latent structure.
+
+It provides:
+
+reproducible trajectories
+clean action signals
+explicit task labels
+large numbers of trajectories
+controlled variation
+
+However, ManiSkill is not assumed to be the final target domain.
+
+The eventual goal is validation on real-world manipulation data.
+
+ManiSkill
+   ↓
+latent / teacher validation
+   ↓
+real-world data
+   ↓
+generalization
+   ↓
+deployment
+
+13. Current Development
+v6-alpha
+
+Current Action → Language baseline:
+
+PickCube
+100 / 100 = 100.0%
+
+StackCube
+100 / 100 = 100.0%
+
+Overall
+200 / 200 = 100.0%
+
+
+Unseen trajectory evaluation:
+
+PickCube
+100 / 100 = 100.0%
+
+StackCube
+100 / 100 = 100.0%
+
+Overall
+200 / 200 = 100.0%
+
+
+These experiments establish the initial Action Encoder baseline.
+
+14. Current Priority
+
+The immediate goal is not to build the complete VLA.
+
+The development order is:
+
+1. Action Encoder
+        ↓
+2. Action Teacher
+        ↓
+3. Analyze Action latent
+        ↓
+4. Language Encoder
+        ↓
+5. p(z_A | L)
+        ↓
+6. MobileCLIP Vision Encoder
+        ↓
+7. p(z_V | L)
+        ↓
+8. Vision + Action fusion
+        ↓
+9. VLA Policy
+        ↓
+10. Real-world evaluation
+
+
+The first milestone is therefore:
+
+Build an Action latent space that represents manipulation semantics rather than merely memorizing task labels.
+
+15. Research Hypothesis
+
+The central hypothesis is:
+
+Language does not uniquely determine visual state or action realization. Therefore, predicting a conditional distribution over Vision and Action latents is more appropriate than forcing a single point estimate.
+
+A second hypothesis is:
+
+As language specifies more information, the corresponding conditional latent distribution should become more concentrated.
 
 For example:
 
@@ -255,88 +584,34 @@ lower visual uncertainty
 
 "pick red cube on the left"
         ↓
-lower visual/state uncertainty
+lower uncertainty about visual state
 
 
-The same principle applies to action realization.
+The same principle applies to Action.
 
-Data Philosophy
+16. Design Philosophy
 
-AntVLA does not aim to solve arbitrarily complicated instructions.
+AntVLA is not:
 
-The target is:
+A large model that understands everything.
 
-simple tasks
-×
-diverse objects
-×
-diverse environments
-×
-diverse trajectories
+AntVLA aims to be:
 
+A small model that understands enough to work.
 
-Examples of primitive tasks:
+The research focus is therefore not language generation.
 
-Pick
-Place
-Push
-Pull
-Open
-Close
-Insert
-Stack
+The core question is:
 
-
-The objective is to make a small model robust to real-world variation, rather than making a large model capable of interpreting increasingly complicated instructions.
-
-Current Progress
-AntVLA v6-alpha
-
-Action → Language baseline:
-
-PickCube
-100 / 100 = 100.0%
-
-StackCube
-100 / 100 = 100.0%
-
-Overall
-200 / 200 = 100.0%
-
-
-The model also achieves:
-
-UNSEEN TRAJECTORY TEST
-
-PickCube
-100 / 100 = 100.0%
-
-StackCube
-100 / 100 = 100.0%
-
-Overall
-200 / 200 = 100.0%
-
-
-These experiments establish the initial Action Encoder → Language baseline.
-
-The next step is to introduce visual information and replace point-based latent regression with language-conditioned latent distributions.
+How can a compact latent space represent What and How, preserve the ambiguity that language leaves unspecified, and provide an interface between reasoning and fast robot control?
 
 Roadmap
  Action Encoder
  Action → Language baseline
  Unseen trajectory evaluation
- MobileCLIP Vision Encoder
- Vision latent + Action latent fusion
+ Action Teacher
+ Action latent analysis
  Language Encoder
- 
-𝑝
-(
-𝑧
-𝑉
-∣
-𝐿
-)
  
 𝑝
 (
@@ -345,26 +620,19 @@ Roadmap
 ∣
 𝐿
 )
+ MobileCLIP Vision Encoder
+ 
+𝑝
+(
+𝑧
+𝑉
+∣
+𝐿
+)
  Gaussian baseline
  MDN / multimodal latent distribution
- Simple-task real-world evaluation
- Lightweight deployment evaluation
-Design Philosophy
-
-AntVLA is not intended to be:
-
-A large model that understands everything.
-
-It is intended to be:
-
-A small model that understands enough to work.
-
-The central research question is therefore not:
-
-"How much language can the model generate?"
-
-but:
-
-"How much of the visual state and action can language specify, and how should the remaining ambiguity be represented in latent space?"
-
-This motivates language-conditioned distributions over both Vision and Action latents.
+ Vision + Action fusion
+ VLA Policy
+ Real-world evaluation
+ Slow reasoning → latent intervention
+ Lightweight deployment
