@@ -1,0 +1,105 @@
+from pathlib import Path
+import argparse
+import time
+
+import numpy as np
+from PIL import Image
+import openvino as ov
+
+
+IMAGE_SIZE = 256
+
+
+def load_model(model_path: str, device: str = "GPU"):
+    core = ov.Core()
+
+    print(f"[OpenVINO] devices: {core.available_devices}")
+    print(f"[OpenVINO] loading: {model_path}")
+    print(f"[OpenVINO] device: {device}")
+
+    model = core.read_model(model_path)
+    compiled = core.compile_model(model, device)
+
+    return compiled
+
+
+def preprocess(image_path: Path):
+    image = Image.open(image_path).convert("RGB")
+    image = image.resize((IMAGE_SIZE, IMAGE_SIZE))
+
+    x = np.asarray(image, dtype=np.float32) / 255.0
+    x = np.transpose(x, (2, 0, 1))
+    x = np.expand_dims(x, 0)
+
+    return x
+
+
+def encode(compiled, image_path: Path):
+    x = preprocess(image_path)
+    result = compiled([x])[0]
+
+    result = np.asarray(result, dtype=np.float32)
+
+    # L2 normalize
+    norm = np.linalg.norm(result, axis=-1, keepdims=True)
+    result = result / np.maximum(norm, 1e-12)
+
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="MobileCLIP2-S0 embedding generator for Intel Xe / OpenVINO"
+    )
+
+    parser.add_argument(
+        "--model",
+        default="mobileclip2_s0_visual.xml",
+        help="OpenVINO .xml model path",
+    )
+
+    parser.add_argument(
+        "--image",
+        required=True,
+        help="Input image",
+    )
+
+    parser.add_argument(
+        "--device",
+        default="GPU",
+        help="OpenVINO device: GPU or CPU",
+    )
+
+    args = parser.parse_args()
+
+    model_path = Path(args.model)
+    image_path = Path(args.image)
+
+    if not model_path.exists():
+        raise FileNotFoundError(model_path)
+
+    if not image_path.exists():
+        raise FileNotFoundError(image_path)
+
+    compiled = load_model(str(model_path), args.device)
+
+    # warmup
+    for _ in range(3):
+        encode(compiled, image_path)
+
+    start = time.perf_counter()
+    embedding = encode(compiled, image_path)
+    elapsed = time.perf_counter() - start
+
+    print()
+    print("=== MobileCLIP2-S0 ===")
+    print(f"device     : {args.device}")
+    print(f"embedding  : {embedding.shape}")
+    print(f"dtype      : {embedding.dtype}")
+    print(f"norm       : {np.linalg.norm(embedding):.6f}")
+    print(f"time       : {elapsed * 1000:.2f} ms")
+    print(f"throughput : {1.0 / elapsed:.2f} images/sec")
+
+
+if __name__ == "__main__":
+    main()
