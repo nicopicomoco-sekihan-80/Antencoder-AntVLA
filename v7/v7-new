@@ -1,0 +1,239 @@
+Comparative Architectures
+
+The next experiment compares three approaches to investigate how language acquires action-related meaning and how easily a model can exploit language shortcuts.
+
+The central concern is a potential shortcut in which the language representation mainly identifies what object is present rather than learning what action should be performed.
+
+For example:
+
+"pick the banana"
+        ↓
+     "banana"
+        ↓
+   action associated with banana
+
+
+This is undesirable if the goal is for language to encode the meaning of the action itself:
+
+"pick"
+   ↓
+pick-like action trajectories
+
+
+We therefore compare the following three architectures.
+
+① Direct VLA
+Image + Language
+       ↓
+      VLA
+       ↓
+    Action
+
+
+This is the conventional end-to-end formulation.
+
+The model is free to decide how visual and linguistic information should be combined. No explicit separation between What and How is imposed.
+
+② Explicit What / How Representation
+                 Language
+                    ↓
+             Language Encoder
+                ↙         ↘
+              l_V         l_A
+             What          How
+                ↓           ↓
+Image → z_V ────────────────┐
+                            ↓
+                           z_A
+                            ↓
+                      Action Decoder
+                            ↓
+                          Action
+
+
+The language representation is explicitly divided into two components:
+
+l_V: What — what object/state should be considered
+
+l_A: How — what action should be performed
+
+The visual encoder produces z_V, while the action encoder/decoder defines the action latent space z_A.
+
+The goal is to encourage the language representation to associate verbs such as:
+
+pick
+place
+push
+pull
+
+
+with corresponding action structures, rather than allowing the language representation to rely primarily on object identity.
+
+For example:
+
+pick banana
+pick apple
+pick cube
+
+
+should share a common How / pick representation while differing in their What / object representation.
+
+③ Raw Language + Vision Encoder → Action
+                    Image
+                      ↓
+                CLIP Vision
+                      ↓
+                Visual Feature
+                      │
+                      │
+Raw Language ──────────┤
+                      ↓
+                    Action
+
+
+In this architecture, there is no dedicated pretrained language encoder.
+
+The language input is processed directly from the raw language representation, while the visual input is encoded by the CLIP vision encoder.
+
+The purpose of this experiment is to test whether a relatively simple language-processing mechanism, grounded directly in visual information, can learn the language–action relationship without relying on a powerful pretrained language encoder.
+
+This provides an important control experiment for Architecture ②:
+
+Is explicit What / How structure actually necessary, or can raw language grounded by visual features learn the required action semantics by itself?
+
+Main Research Question
+
+The three architectures test different ways of grounding language:
+
+① Direct VLA
+   Language + Image
+          ↓
+       Action
+
+② Explicit grounding
+   Language
+      ↓
+   What / How
+      ↓
+   Visual + Action latent
+      ↓
+     Action
+
+③ Direct visual grounding
+   Raw Language + Image
+          ↓
+       Action
+
+
+The key question is whether explicitly separating What and How helps prevent a language representation from taking an object-based shortcut.
+
+In particular, we want to test whether the representation of:
+
+"pick banana"
+"pick apple"
+"pick cube"
+
+
+captures the shared action concept pick, rather than primarily encoding the object identity.
+
+Evaluation
+
+The three architectures will be compared under matched experimental conditions.
+
+1. Parameter Count
+
+Measure:
+
+total parameters
+
+trainable parameters
+
+frozen parameters
+
+A lightweight architecture may have an advantage if it can achieve comparable performance without a large multimodal fusion module.
+
+2. Training Speed
+
+Measure:
+
+training time
+
+iterations / second
+
+time to convergence
+
+GPU memory usage
+
+Architecture ② is expected to be relatively easy to modify and tune because the visual, language, and action representations can be developed as separate components. This is an empirical hypothesis rather than an assumed result.
+
+3. Action Prediction Accuracy
+
+Evaluate:
+
+action prediction error
+
+trajectory-level error
+
+task success
+
+The final accuracy is not assumed in advance.
+
+The purpose of the comparison is to determine whether the additional structural constraints of Architecture ② improve language–action grounding without introducing excessive computational cost.
+
+Action Latent Space
+
+The current experiments first establish an action autoencoder:
+
+Action trajectory
+       ↓
+Action Encoder
+       ↓
+      z_A
+       ↓
+Action Decoder
+       ↓
+Reconstructed Action
+
+
+This provides a compact representation of action trajectories.
+
+The current bottleneck comparison uses 32-step action sequences and evaluates several latent dimensions.
+
+Preliminary results:
+
+latent     final_loss       min_loss       params
+       8     0.00069496     0.00055901      1203231
+      16     0.00058946     0.00053352      1207351
+      32     0.00056990     0.00054260      1215591
+      64     0.00052765     0.00052765      1232071
+     128     0.00058456     0.00052373      1265031
+
+
+At this stage, latent_dim = 64 is a practical candidate for subsequent experiments. This is only a preliminary reconstruction experiment; it does not establish that 64 dimensions are optimal for language–action grounding.
+
+Hypothesis
+
+The working hypothesis is that language should not merely identify the object associated with an action.
+
+Instead, the model should learn a representation in which:
+
+Language
+   ↓
+"What?"
+"How?"
+   ↓
+Visual concept + Action concept
+   ↓
+Concrete action
+
+
+In particular:
+
+"pick"
+   ↓
+distribution of pick trajectories
+
+
+should be learnable across different objects.
+
+The comparison between ①, ②, and ③ is intended to determine whether explicit What / How factorization provides a useful inductive bias for this purpose.
