@@ -3,147 +3,128 @@ Overview
 
 This project investigates how vision-language representations should be formed for vision-language-action (VLA) models.
 
-The current research started from a simple question:
+The research began with an explicit What / How factorization of language and has now led to a new hypothesis:
 
-How can a VLA model extract only the information from language that is actually relevant to the observed scene and the desired action?
+Perhaps the deeper problem is not only how much information language contains, but the assumption that language should first be converted into an independent semantic representation before being grounded in vision.
 
-The research first explored an explicit What / How decomposition of language, followed by a new hypothesis:
+v8 therefore explores two related approaches:
 
-Perhaps the problem is not only that language representations contain too much information.
-Perhaps the deeper problem is trying to interpret language independently of vision in the first place.
+Model 2: explicitly factorize language into What and How, then construct task-relevant representations.
 
-Based on this observation, v8 explores two related approaches:
+Model 3-Lite: do not explicitly factorize language and do not first construct an independent language representation. Instead, language and vision interact directly through joint attention.
 
-Model 2: explicitly factorize language into task-relevant components.
+The longer-term goal is to extend this representation into a latent-space planner, where a world model can perform intermediate reasoning in latent space rather than requiring natural language to serve as the internal reasoning medium.
 
-Model 3-Lite: interpret language and vision jointly, allowing visual information to participate in the formation of the language representation itself.
+Model 2 — Explicit What / How Factorization
 
-The goal is not simply to make the model larger, but to investigate where and when language should acquire its task-relevant meaning.
+Model 2 starts from the observation that a raw language representation can contain information that is irrelevant to the current action.
 
-Research Direction
-Model 2 — Explicit Language Factorization
-
-The initial approach uses a pretrained language representation such as BERT.
-
-A raw instruction is first encoded:
+Instead of passing the entire instruction directly to the action model, the language is explicitly decomposed into:
 
 Language
-   ↓
-BERT
-   ↓
-Language latent
-   ↓
-Task-relevant information
-   ↓
-Vision / Action
+   │
+   ├── What → object / target
+   │
+   └── How  → action / operation
 
-
-The motivation is that a general language model contains considerably more information than is necessary for action generation.
 
 For example:
 
 "pick the banana"
 
-
-contains linguistic information that may be irrelevant to the robot's immediate action.
-
-Therefore, Model 2 introduces an explicit What / How decomposition:
-
-             Language
-                 ↓
-               BERT
-                 ↓
-        ┌────────┴────────┐
-        ↓                 ↓
-      What               How
-    (object)           (action)
-        ↓                 ↓
-        └────────┬────────┘
-                 ↓
-              Action
+What → banana
+How  → pick
 
 
-The hypothesis is that explicitly extracting task-relevant information can reduce unnecessary information in the language representation.
+The purpose is to provide the model with a representation focused on information relevant to vision and action.
 
-A New Question
+The important point is that Model 2 does not use BERT.
 
-Model 2 raises a deeper question.
+The language-side representations are designed specifically around the What / How decomposition rather than relying on a general-purpose pretrained language encoder.
 
-Even if unnecessary information can be removed from the language representation, should language be interpreted independently before vision is considered?
+A Question Raised by Model 2
 
-For example:
+Model 2 addresses the problem of unnecessary language information by explicitly extracting the components considered relevant to action.
+
+However, this leads to a deeper question:
+
+Why should language be interpreted independently of the visual scene in the first place?
+
+Consider:
 
 "pick the banana"
 
 
-can be represented linguistically before looking at the image.
+Before seeing the image, the model can construct an abstract representation of:
 
-But the actual meaning required for action depends on the current visual context.
+banana + pick
 
-The banana referred to by the instruction is not an abstract banana. It is the banana that exists—or needs to be searched for—in the current environment.
 
-This leads to the next hypothesis:
+But the actual action depends on the current visual context.
 
-Instead of first constructing a complete language representation and then combining it with vision, language may need to be interpreted while attending to the visual scene.
+The relevant banana is not an abstract object. It is an object in a particular scene.
+
+This motivates Model 3-Lite.
 
 Model 3-Lite — Vision-Conditioned Language Interpretation
 
-Model 3-Lite removes the explicit What / How decomposition and does not use an independent language encoder whose representation is completed before visual interaction.
+Model 3-Lite removes the explicit What / How decomposition.
 
-Instead, raw language tokens and visual tokens are introduced into a joint attention mechanism.
+More importantly, it avoids first converting the entire language instruction into a completed independent semantic representation.
+
+Instead, raw language tokens and visual tokens interact directly.
 
 Image
   ↓
 Vision Encoder
   ↓
 Vision Tokens
-        ↘
-          Joint Attention
-        ↗
+       ↘
+         Joint Attention
+       ↗
 Language Tokens
   ↓
 Token Embedding
 
-          ↓
-   Multimodal Representation
-          ↓
-      Action Prediction
+       ↓
+Multimodal Representation
+       ↓
+Action Prediction
 
 
 The key idea is:
 
-Language is not fully interpreted before seeing the visual scene. Its task-relevant representation is formed through interaction with vision.
+Language should be interpreted while attending to the visual scene.
 
-This is different from simply concatenating two already-computed embeddings.
-
-The intended interaction is:
+The intended interaction is therefore:
 
 Language ↔ Vision
 
 
 rather than:
 
-Language → Language Representation
-                         ↓
-                    Vision Fusion
+Language
+   ↓
+Independent semantic representation
+   ↓
+Vision fusion
 
 Why Model 3-Lite?
 
-Consider the instruction:
+The difference can be illustrated with:
 
 "pick the banana"
 
 
-A conventional language-first approach may construct an abstract representation of:
+Model 2 explicitly extracts:
 
-banana + pick
+What = banana
+How  = pick
 
 
-before examining the image.
+and constructs task-relevant representations from them.
 
-Model 3-Lite asks whether this ordering is actually appropriate.
-
-Instead:
+Model 3-Lite instead asks whether the meaning required for action can emerge through interaction:
 
 "pick the banana"
         ↕
@@ -154,15 +135,13 @@ task-relevant interpretation
       action
 
 
-The model can use the visual scene to determine which aspects of the language are relevant to the current action.
+The hypothesis is that the visual context should participate during the formation of the language representation rather than only after it has already been constructed.
 
-This is particularly important for grounding.
+A Counterargument
 
-A Counterargument: What If the Object Is Not Visible?
+A natural objection is:
 
-A natural objection to Model 3-Lite is:
-
-What happens if the instructed object is not currently visible?
+What happens if the instructed object is not visible?
 
 For example:
 
@@ -173,11 +152,11 @@ Image:
 apple + cube + table
 
 
-The language still provides information about what should be searched for, even though the object is not currently visible.
+The language still provides information about what the system should search for.
 
 Therefore, Model 3-Lite does not assume that vision completely determines language.
 
-Instead, the intended relationship is:
+Instead:
 
 Language
    ↓
@@ -188,45 +167,62 @@ Vision
 what is currently observable
 
 
-The hypothesis is that these two sources of information should interact during interpretation rather than forcing language to produce a complete task representation independently of vision.
+The hypothesis is that these two sources of information should interact during interpretation.
 
-The Central Research Question
+The Core Difference
 
-The comparison between Model 2 and Model 3-Lite therefore becomes:
+The conceptual difference between the two approaches is therefore:
 
 Model 2
 
-First understand and compress language, then combine it with vision.
+Explicit factorization
+
+Language
+   ↓
+What / How
+   ↓
+task-relevant representation
+   ↓
+Vision / Action
 
 Model 3-Lite
 
-Interpret language while looking at vision.
+Joint interpretation
 
-The research question is:
+Language ↔ Vision
+        ↓
+task-relevant representation
+        ↓
+Action
 
-Can a VLA model learn more task-relevant and compositional representations when language is interpreted jointly with visual context, rather than being fully encoded independently beforehand?
+
+Model 2 asks:
+
+Can explicitly removing irrelevant language information produce a better action representation?
+
+Model 3-Lite asks:
+
+Is it necessary to construct an independent language representation before visual grounding at all?
 
 Experimental Setup
 
 The current v8 experiment uses Bridge data.
 
-A small initial dataset of approximately 560 samples is prepared for the first Model 3-Lite experiments.
+An initial dataset of approximately 560 samples has been prepared for the first Model 3-Lite experiment.
 
-The purpose of this initial experiment is not large-scale performance optimization.
-
-Instead, the first goals are:
+The initial goals are:
 
 Verify that Model 3-Lite can fit the training data.
 
-Verify that vision-language interaction is functioning as intended.
+Verify that vision-language joint attention is functioning as intended.
 
 Test generalization across combinations of actions and objects.
 
-Compare the resulting behavior with the explicit factorization used in Model 2.
+Compare the resulting behavior with the explicit What / How approach of Model 2.
 
 Action Representation
 
-The existing action autoencoder is reused:
+The existing action autoencoder is reused.
 
 Action trajectory
         ↓
@@ -243,57 +239,142 @@ Image + Language
        ↓
  Action latent
        ↓
-Action decoder
+Action Decoder
        ↓
 Action trajectory
 
 
-This allows the experiment to focus on the vision-language representation problem rather than simultaneously learning an entirely new action representation.
+This allows the initial experiment to focus on the vision-language representation problem.
 
-Experimental Hypothesis
+Future Direction — Latent-Space Planner
 
-The experiments are designed around two competing hypotheses.
+Model 3-Lite is not intended to be the final architecture.
 
-Model 2 hypothesis
+A longer-term goal is to introduce a Planner that uses a world model and performs intermediate reasoning in latent space.
 
-Explicitly removing irrelevant language information and separating:
+The motivation is that natural language does not necessarily need to be the medium of internal reasoning.
 
-What + How
+Instead of:
 
-
-will produce a more useful representation for action generation.
-
-Model 3-Lite hypothesis
-
-The deeper issue is not merely excessive information in language representations.
-
-Instead, the problem may be the assumption that language should be semantically completed before visual grounding.
-
-Model 3-Lite therefore tests whether:
-
-Vision ↔ Language
+Language
+   ↓
+Language reasoning
+   ↓
+Action
 
 
-joint interaction can produce a more action-relevant representation naturally.
+the future architecture may use:
+
+Language
+   ↓
+Grounding
+   ↓
+Latent state
+   ↓
+        ┌──────────────┐
+        │    Planner   │
+        │              │
+        │ latent       │
+        │ reasoning    │
+        └──────┬───────┘
+               ↓
+         future latent
+               ↓
+          Action
+
+
+The Planner would use a world model to predict and evaluate future latent states.
+
+In this formulation, language serves primarily as a means of specifying the task or goal, while the internal reasoning process takes place in a compact latent representation.
+
+This is an important motivation for Model 3-Lite.
+
+If vision and language can first be grounded into a shared task-relevant latent space, that latent space can potentially become the medium for intermediate planning.
+
+The long-term architecture is therefore envisioned as:
+
+Language
+    +
+  Vision
+    ↓
+Grounded Representation
+    ↓
+Latent State
+    ↓
+World Model + Planner
+    ↓
+Predicted Future Latents
+    ↓
+Action Decoder
+    ↓
+Robot Action
+
+
+The intended concept is latent-space intermediate reasoning rather than requiring the model to repeatedly convert its internal state into natural language during planning.
+
+Research Roadmap
+
+The current research can therefore be viewed as a progression:
+
+Model 2
+Explicit What / How
+        ↓
+Remove unnecessary language information
+        ↓
+Question the language-first assumption
+        ↓
+Model 3-Lite
+Vision ↔ Language joint interpretation
+        ↓
+Grounded latent representation
+        ↓
+World Model
+        ↓
+Planner
+        ↓
+Latent-space intermediate reasoning
+        ↓
+Action
+
+
+Each stage addresses a different question:
+
+Model 2: Can explicit factorization make language representations more useful for action?
+
+Model 3-Lite: Can language be interpreted more effectively through direct interaction with vision?
+
+Future Planner: Can the resulting grounded latent representation serve as an internal medium for world-model-based planning?
 
 Status
 Model 2
 
-What / How decomposition: implemented as the current research foundation
+What / How decomposition: research foundation
 
-BERT-based language representation: part of the existing approach
+BERT: not used
 
-Action representation: action autoencoder available
+Language representation: task-oriented What / How representation
+
+Action autoencoder: available
 
 Model 3-Lite
 
 Research hypothesis: defined
+
+Raw language + visual interaction: planned
 
 Initial Bridge dataset: prepared
 
 Model architecture: next implementation target
 
 Initial experiment: pending
+
+Future Planner
+
+World-model-based planner: future direction
+
+Latent-space intermediate reasoning: future direction
+
+Natural-language-free internal reasoning: future direction
 
 Current v8 Structure
 v8/
@@ -316,36 +397,16 @@ v8/
 
 The current implementation is being extended from the Model 2 foundation toward Model 3-Lite.
 
-Long-Term Direction
-
-The objective is not simply to compare two network architectures.
+Research Direction
 
 The broader question is:
 
-Where should the meaning of language be formed in a vision-language-action system?
+Where should the meaning of language be formed in a vision-language-action system, and what representation should the system use for internal reasoning?
 
-Possible answers explored in this project are:
+Model 2 explores explicit language factorization.
 
-Model 2:
-Language
-   ↓
-Semantic / task representation
-   ↓
-Vision
-   ↓
-Action
+Model 3-Lite explores vision-conditioned language interpretation.
 
+The future Planner explores latent-space reasoning with a world model.
 
-versus:
-
-Model 3-Lite:
-Language
-    ↕
-  Vision
-    ↓
-Task-relevant representation
-    ↓
-Action
-
-
-Model 3-Lite therefore represents a shift from language representation compression toward vision-conditioned language interpretation.
+The overall direction is therefore a progression from language-centric representations toward grounded latent representations that can support perception, action, and eventually internal planning within a shared latent space.
