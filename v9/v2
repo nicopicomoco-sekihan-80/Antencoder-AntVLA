@@ -1,0 +1,481 @@
+AntVLA v2 — Language-Conditioned Action Latent Representation
+Progress Report
+1. Objective
+
+The goal of this stage of the AntVLA v2 project is to learn a compact action representation, denoted as 
+𝑧
+𝐴
+, from variable-length action sequences and subsequently investigate whether the action representation can be predicted from natural-language instructions.
+
+The current pipeline consists of two stages:
+
+Train a variable-length Action Autoencoder to compress an entire action sequence into a fixed-dimensional latent vector 
+𝑧
+𝐴
+.
+
+Train a language-conditioned model to predict 
+𝑧
+𝐴
+ from the corresponding language instruction.
+
+The initial baseline uses a 32-dimensional action latent space.
+
+2. Dataset
+
+The experiments use the cached Bridge-style manipulation dataset:
+
+C:\Users\nicop\antVLA-v8\data\bridge_v3_cache
+
+The current dataset contains:
+
+1,500 episodes
+
+Training episodes: 1,350
+
+Validation episodes: 150
+
+Action dimensionality: 7
+
+Variable action lengths:
+
+Minimum: 4
+
+Maximum: 98
+
+Mean: 38.009
+
+Standard deviation: 12.025
+
+Episodes with language annotations: 1,054 / 1,500
+
+This means that only approximately 70% of the available episodes currently have usable language supervision.
+
+3. Variable-Length Action Autoencoder
+Architecture
+
+The baseline Action Autoencoder uses:
+
+Input/action dimension: 7
+
+Hidden dimension: 128
+
+Latent dimension: 32
+
+Batch size: 64
+
+Learning rate: 3e-4
+
+Weight decay: 1e-4
+
+Random seed: 42
+
+The model is designed to accept variable-length action sequences and produce one fixed-dimensional latent vector per episode.
+
+The trained model was saved as:
+
+v2_actionautoencoder_variable.pt
+
+Training result
+
+The best validation performance obtained during training was:
+
+Best epoch: 493
+
+Best validation MSE: 0.509513
+
+The final reported sample MSE was:
+
+0.527132
+
+Although the validation loss continued to fluctuate, the training loss also continued to decrease, indicating that the model had not simply reached a completely flat optimization regime.
+
+However, the improvement became relatively slow in the later stages.
+
+4. 32-Dimensional 
+𝑧
+𝐴
+ Extraction
+
+After training the Action Autoencoder, one 
+𝑧
+𝐴
+ vector was extracted from every episode.
+
+The resulting representation has shape:
+
+𝑧
+𝐴
+∈
+𝑅
+1500
+×
+32
+
+The extracted file is:
+
+zA_variable.npz
+
+with metadata stored in:
+
+zA_variable_metadata.json
+
+Latent statistics
+
+The resulting latent representation has:
+
+Number of samples: 1,500
+
+Latent dimension: 32
+
+Mean absolute latent value: 1.150959
+
+Global standard deviation: 1.479016
+
+Minimum value: -7.271162
+
+Maximum value: 5.972978
+
+Mean latent L2 norm: 7.855371
+
+L2 norm standard deviation: 3.021340
+
+The latent dimensions are not perfectly standardized. Several dimensions have substantially larger variance than others, which suggests that the 32-dimensional representation is not simply using all dimensions equally.
+
+This is useful information for future experiments with different latent dimensionalities.
+
+5. Qualitative Behavior of 
+𝑧
+𝐴
+
+Episodes with identical or highly similar action sequences produce similar latent vectors.
+
+For example, episodes 0 and 1 have the same language instruction:
+
+"put small spoon from basket to tray"
+
+and produce exactly the same extracted 
+𝑧
+𝐴
+ in the current dataset.
+
+Other examples show that semantically different manipulation tasks produce noticeably different latent vectors.
+
+This indicates that the action autoencoder is successfully producing a compact representation that reflects differences in the underlying action trajectory.
+
+However, at this stage it should not yet be assumed that 
+𝑧
+𝐴
+ is a clean semantic representation. It is primarily an action reconstruction representation.
+
+6. Language → 
+𝑧
+𝐴
+
+The next experiment was to predict the action latent directly from language.
+
+An initial Mixture Density Network (MDN) was tested with:
+
+Latent dimension: 32
+
+Number of mixture components: 5
+
+Training samples: 896
+
+Validation samples: 158
+
+The MDN was trained using negative log-likelihood (NLL), while MSE was also monitored.
+
+MDN result
+
+The training behavior showed a strong divergence between training and validation NLL.
+
+For example:
+
+Epoch	Train NLL	Val NLL	Train MSE	Val MSE
+1	50.97	39.05	57.67	32.84
+4	20.91	22.35	29.25	24.84
+10	11.88	24.09	23.95	22.90
+20	1.66	41.14	20.75	22.52
+30	-6.72	71.83	19.07	22.47
+34	-8.90	84.17	18.32	21.81
+
+Early stopping selected:
+
+Best epoch: 4
+
+Best validation NLL: 22.354481
+
+The MDN therefore showed clear signs of overfitting.
+
+Importantly, the validation MSE did not collapse in the same way as the validation NLL. This suggests that the model was learning increasingly sharp or poorly calibrated distributions around the training data rather than obtaining a correspondingly strong generalization improvement.
+
+7. Interpretation of the MDN Result
+
+The current dataset is relatively small for learning a 32-dimensional conditional distribution from language.
+
+The effective language-supervised dataset contains only:
+
+1054
+ episodes
+
+and after the train/validation split, the MDN used approximately:
+
+896 training samples
+
+158 validation samples
+
+For a 32-dimensional output, this is a challenging regime, especially when the language descriptions are diverse and the mapping from language to action may be one-to-many.
+
+Therefore, the poor MDN generalization does not necessarily mean that language cannot predict 
+𝑧
+𝐴
+.
+
+A more conservative interpretation is:
+
+The current MDN has too much modeling flexibility relative to the amount of language-supervised data available.
+
+8. Current Decision: MLP Baseline
+
+Instead of immediately using a high-capacity probabilistic model such as an MDN, the next experiment will use a simpler language → 
+𝑧
+𝐴
+ MLP.
+
+This provides a much cleaner baseline.
+
+The proposed pipeline is:
+
+Language
+→
+text representation
+→
+MLP
+→
+𝑧
+𝐴
+
+The primary objective is to minimize:
+
+𝐿
+𝑀
+𝑆
+𝐸
+=
+∥
+𝑧
+^
+𝐴
+−
+𝑧
+𝐴
+∥
+2
+
+The MLP is preferable as the next experiment because:
+
+It has fewer modeling assumptions than the MDN.
+
+It is easier to optimize.
+
+It provides a direct comparison between language information and the learned action latent.
+
+It gives a strong baseline before introducing a more complex probabilistic model.
+
+It is less likely to overfit aggressively on only ~900 training examples.
+
+9. Why MLP Before GRU
+
+A GRU-based language model was also considered.
+
+However, for the current stage, an MLP is the better experimental choice.
+
+The main reason is that the goal is not yet to build the final language encoder. The immediate question is:
+
+"How predictable is the learned action representation 
+𝑧
+𝐴
+ from language?"
+
+Using a relatively simple language representation and MLP makes this question easier to answer.
+
+If the MLP performs reasonably well, a GRU or stronger sequence encoder can subsequently be tested to determine whether the limitation comes from language encoding capacity.
+
+If the MLP already performs poorly, increasing model complexity may simply increase overfitting without solving the underlying data limitation.
+
+10. Latent Dimension as an Important Experimental Variable
+
+The current 32-dimensional representation should be treated as the baseline, rather than as an assumed optimal dimensionality.
+
+The Action Autoencoder results suggest that experimenting with other latent dimensions is worthwhile.
+
+Potential candidates include:
+
+8 dimensions
+
+16 dimensions
+
+32 dimensions — baseline
+
+64 dimensions
+
+The comparison should consider at least two quantities:
+
+Action reconstruction
+
+How well can the latent representation reconstruct the original action sequence?
+
+𝑧
+𝐴
+→
+𝐴
+^
+
+Language predictability
+
+How accurately can language predict the action latent?
+
+𝐿
+→
+𝑧
+^
+𝐴
+
+A useful latent dimension is therefore not necessarily the one with the lowest reconstruction error.
+
+The ideal representation should provide a good trade-off between:
+
+action reconstruction quality,
+
+compactness,
+
+stability,
+
+and predictability from language.
+
+11. Current Experimental Status
+
+The project has successfully completed the following stages:
+
+Completed
+
+Variable-length Action Autoencoder implemented.
+
+32-dimensional 
+𝑧
+𝐴
+ baseline trained.
+
+Best validation action reconstruction MSE: 0.509513.
+
+𝑧
+𝐴
+ extracted for all 1,500 episodes.
+
+Resulting latent matrix: 1500 × 32.
+
+Language annotations identified for 1,054 episodes.
+
+Initial language → 
+𝑧
+𝐴
+ MDN implemented and trained.
+
+MDN overfitting behavior confirmed.
+
+Current next step
+
+The next experiment is:
+
+Language
+→
+MLP
+→
+𝑧
+𝐴
+
+using the existing 32-dimensional latent representation.
+
+After establishing this baseline, the latent dimensionality can be varied systematically.
+
+12. Proposed Experimental Matrix
+
+A practical next-stage experiment is:
+
+Experiment	Latent dim	Language model	Objective
+A	8	MLP	MSE
+B	16	MLP	MSE
+C	32	MLP	MSE
+D	64	MLP	MSE
+E	32	GRU	MSE
+F	32	MDN	NLL
+
+The 32-dimensional MLP experiment should be completed first because it establishes the primary baseline.
+
+Then the dimensionality experiment can determine whether 32 dimensions are actually appropriate.
+
+13. Main Findings So Far
+
+The experiments provide several important findings.
+
+Finding 1 — A fixed-dimensional action representation is feasible
+
+A variable-length action sequence can be compressed into a single 32-dimensional vector while achieving a validation reconstruction MSE of approximately 0.51.
+
+Finding 2 — The current latent space contains substantial structure
+
+The extracted 
+𝑧
+𝐴
+ vectors have non-trivial variation across episodes, indicating that the latent space is not collapsing to a constant representation.
+
+Finding 3 — Language supervision is currently limited
+
+Only 1,054 of 1,500 episodes contain language annotations.
+
+This is an important limitation for the language-to-action experiment.
+
+Finding 4 — The MDN is too flexible for the current dataset
+
+The MDN rapidly reduces training NLL while validation NLL increases dramatically.
+
+This is strong evidence of overfitting.
+
+Finding 5 — A simpler MLP is the appropriate next baseline
+
+Before increasing model complexity, a simple language-to-
+𝑧
+𝐴
+ MLP should establish how much of the action representation is predictable from language under the current data regime.
+
+Finding 6 — Latent dimensionality should be treated as an experimental variable
+
+The current 32-dimensional latent should be considered a baseline rather than a final design choice.
+
+14. Conclusion
+
+The current AntVLA v2 experiments establish a complete preliminary pipeline from variable-length actions to a fixed-dimensional action representation and finally to language-conditioned action prediction.
+
+The 32-dimensional Action Autoencoder provides a reasonable baseline representation, with a best validation reconstruction MSE of 0.509513.
+
+However, the first language-conditioned MDN experiment reveals a clear data/model-capacity mismatch. With only approximately 900 training examples, a 32-dimensional mixture distribution is prone to overfitting.
+
+Therefore, the next stage will prioritize a simpler deterministic MLP:
+
+Language
+→
+MLP
+→
+𝑧
+𝐴
+
+The resulting performance will serve as the primary baseline for determining whether the learned action latent is meaningfully predictable from language.
+
+After this baseline is established, experiments with different latent dimensions (8/16/32/64) and eventually sequence-based language encoders such as GRUs can determine whether improvements come from a better latent representation, a better language encoder, or simply increased model capacity.
+
+The central research question at this stage is therefore:
+
+How much of the action representation learned purely from behavior can be recovered from language alone?
+
+This provides a clean foundation for the subsequent development of the full AntVLA architecture.
